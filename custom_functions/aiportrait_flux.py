@@ -4,6 +4,7 @@ import random
 import sys
 from typing import Sequence, Mapping, Any, Union
 import torch
+import numpy as np
 
 
 def get_value_at_index(obj: Union[Sequence, Mapping], index: int) -> Any:
@@ -229,14 +230,14 @@ def ai_portrait_flux(flux_inited_models,image_path, template_id, abs_path=True, 
         cliptextencodeflux_137 = cliptextencodeflux.encode(
             clip_l=get_value_at_index(preprocnewsplitconds_169, 1),
             t5xxl=get_value_at_index(preprocnewsplitconds_169, 1),
-            guidance=2.5,
+            guidance=4.0,
             clip=get_value_at_index(flux_inited_models['overrideclipdevice_133'], 0),
         )
 
         cliptextencodeflux_138 = cliptextencodeflux.encode(
             clip_l=get_value_at_index(preprocnewsplitconds_169, 2),
             t5xxl=get_value_at_index(preprocnewsplitconds_169, 2),
-            guidance=2.5,
+            guidance=4.0,
             clip=get_value_at_index(flux_inited_models['overrideclipdevice_133'], 0),
         )
 
@@ -265,7 +266,7 @@ def ai_portrait_flux(flux_inited_models,image_path, template_id, abs_path=True, 
 
         # for q in range(1):
         convertnumpytotensor_170 = convertnumpytotensor.convert(
-            image=get_value_at_index(flux_inited_models['preprocnewsplitconds_169'], 0)
+            image=get_value_at_index(preprocnewsplitconds_169, 0)
         )
 
         applypulidflux_62 = applypulidflux.apply_pulid_flux(
@@ -313,13 +314,15 @@ def ai_portrait_flux(flux_inited_models,image_path, template_id, abs_path=True, 
             image=get_value_at_index(converttensortonumpy_166, 0),
         )
 
-        _, final_image = srblendprocess.enhance_process(
+        _, final_img = srblendprocess.enhance_process(
             is_front="False",
             model=get_value_at_index(flux_inited_models['srblendbuildpipe_162'], 0),
             src_img=get_value_at_index(gpenprocess_165, 0),
         )
-        return final_image
+        outimg = get_value_at_index(final_img, 0) * 255.
+        return outimg.cpu().numpy().astype(np.uint8)
 
 if __name__ == "__main__":
     # main()
+    pass
     pass

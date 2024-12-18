@@ -3,7 +3,7 @@ import random
 import sys
 from typing import Sequence, Mapping, Any, Union
 import torch
-
+import numpy as np
 
 def get_value_at_index(obj: Union[Sequence, Mapping], index: int) -> Any:
     """Returns the value at the given index of a sequence or mapping.
@@ -153,7 +153,7 @@ def init_portrait_own_models(device1, device2):
             lut_path="lut", gpu_choose=device1, sr_type="RealESRGAN_X2", half=True
         )
 
-        gpenpbuildpipeline = NODE_CLASS_MAPPINGS["GPENPBuildpipeline"]()
+        gpenpbuildpipeline = NODE_CLASS_MAPPINGS["GPENPBuildipeline"]()
         gpenpbuildpipeline_59 = gpenpbuildpipeline.load_model(
             model="GPEN-BFR-1024.pth",
             in_size=1024,
@@ -304,8 +304,8 @@ def ai_portrait_own(portrait_own_inited_models, image_path, template_id, abs_pat
             model=get_value_at_index(portrait_own_inited_models['srblendbuildpipe_58'], 0),
             src_img=get_value_at_index(gpenprocess_60, 0),
         )
-
-        return final_image
+        outimg = get_value_at_index(final_image, 0) * 255.
+        return outimg.cpu().numpy().astype(np.uint8)
 
 if __name__ == "__main__":
     pass
