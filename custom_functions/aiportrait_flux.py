@@ -187,6 +187,24 @@ def init_flux_models(device1, device2):
             alpha=1,
             device=device2,
         )
+        
+        facewarppipebuilder = NODE_CLASS_MAPPINGS["FaceWarpPipeBuilder"]()
+        facewarppipebuilder_177 = facewarppipebuilder.load_models(
+            detect_model_path="facedetect/scrfd_10g_bnkps_shape640x640.onnx",
+            deca_dir="deca",
+            gpu_choose=device2,
+        )
+
+        faceswappipebuilder = NODE_CLASS_MAPPINGS["FaceSwapPipeBuilder"]()
+        faceswappipebuilder_180 = faceswappipebuilder.load_models(
+            swap_own_model="faceswap/swapper_own.pth",
+            arcface_model="faceswap/arcface_checkpoint.tar",
+            facealign_config_dir="face_align",
+            phase1_model="facealign/p1.pt",
+            phase2_model="facealign/p2.pt",
+            device=device2,
+        )
+        
         # return loaded models
         return {
             'pulidfluxmodelloader_45' : pulidfluxmodelloader_45,
@@ -202,6 +220,8 @@ def init_flux_models(device1, device2):
             'loraloadermodelonly_153' : loraloadermodelonly_153,
             'srblendbuildpipe_162' : srblendbuildpipe_162,
             'gpenpbuildpipeline_164' : gpenpbuildipeline_164,
+            "facewarppipebuilder_177" : facewarppipebuilder_177,
+            "faceswappipebuilder_180" : faceswappipebuilder_180,
         }
 
 # flux_inited_models = init_flux_models()
@@ -261,6 +281,9 @@ def ai_portrait_flux(flux_inited_models,image_path, template_id, abs_path=True, 
         ksampler = NODE_CLASS_MAPPINGS["KSampler"]()
         vaedecode = NODE_CLASS_MAPPINGS["VAEDecode"]()
         converttensortonumpy = NODE_CLASS_MAPPINGS["ConvertTensorToNumpy"]()
+        facewarpdetectfacesmethod = NODE_CLASS_MAPPINGS["FaceWarpDetectFacesMethod"]()
+        faceswapdetectpts = NODE_CLASS_MAPPINGS["FaceSwapDetectPts"]()
+        faceswapmethod = NODE_CLASS_MAPPINGS["FaceSwapMethod"]()
         gpenprocess = NODE_CLASS_MAPPINGS["GPENProcess"]()
         srblendprocess = NODE_CLASS_MAPPINGS["SrBlendProcess"]()
 
@@ -307,11 +330,51 @@ def ai_portrait_flux(flux_inited_models,image_path, template_id, abs_path=True, 
         converttensortonumpy_166 = converttensortonumpy.convert(
             image=get_value_at_index(vaedecode_69, 0)
         )
+        
+        facewarpdetectfacesmethod_179 = facewarpdetectfacesmethod.detect_faces(
+            model=get_value_at_index(flux_inited_models['facewarppipebuilder_177'], 0),
+            image=get_value_at_index(preprocnewsplitconds_169, 0),
+        )
+
+        faceswapdetectpts_185 = faceswapdetectpts.detect_face_pts(
+            ptstype="5",
+            model=get_value_at_index(flux_inited_models['faceswappipebuilder_180'], 0),
+            src_image=get_value_at_index(preprocnewsplitconds_169, 0),
+            src_faces=get_value_at_index(facewarpdetectfacesmethod_179, 0),
+        )
+
+        facewarpdetectfacesmethod_184 = facewarpdetectfacesmethod.detect_faces(
+            model=get_value_at_index(flux_inited_models['facewarppipebuilder_177'], 0),
+            image=get_value_at_index(converttensortonumpy_166, 0),
+        )
+
+        faceswapdetectpts_183 = faceswapdetectpts.detect_face_pts(
+            ptstype="5",
+            model=get_value_at_index(flux_inited_models['faceswappipebuilder_180'], 0),
+            src_image=get_value_at_index(converttensortonumpy_166, 0),
+            src_faces=get_value_at_index(facewarpdetectfacesmethod_184, 0),
+        )
+
+        faceswapdetectpts_181 = faceswapdetectpts.detect_face_pts(
+            ptstype="256",
+            model=get_value_at_index(flux_inited_models['faceswappipebuilder_180'], 0),
+            src_image=get_value_at_index(converttensortonumpy_166, 0),
+            src_faces=get_value_at_index(facewarpdetectfacesmethod_184, 0),
+        )
+
+        faceswapmethod_182 = faceswapmethod.swap_face(
+            model=get_value_at_index(flux_inited_models['faceswappipebuilder_180'], 0),
+            src_image=get_value_at_index(preprocnewsplitconds_169, 0),
+            two_stage_image=get_value_at_index(converttensortonumpy_166, 0),
+            source_5pts=get_value_at_index(faceswapdetectpts_185, 0),
+            target_5pts=get_value_at_index(faceswapdetectpts_183, 0),
+            target_256pts=get_value_at_index(faceswapdetectpts_181, 0),
+        )
 
         gpenprocess_165 = gpenprocess.enhance_face(
             aligned=False,
             model=get_value_at_index(flux_inited_models['gpenpbuildpipeline_164'], 0),
-            image=get_value_at_index(converttensortonumpy_166, 0),
+            image=get_value_at_index(faceswapmethod_182, 0),
         )
 
         _, final_img = srblendprocess.enhance_process(
