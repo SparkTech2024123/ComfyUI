@@ -204,26 +204,40 @@ def ai_portrait_own(portrait_own_inited_models, image_path, template_id, abs_pat
         previewnumpy = NODE_CLASS_MAPPINGS["PreviewNumpy"]()
 
         # for q in range(1):
+        facewarpdetectfacesimginput = NODE_CLASS_MAPPINGS[
+            "FaceWarpDetectFacesImgInput"
+        ]()
+        facewarpdetectfacesimginput_77 = facewarpdetectfacesimginput.detect_faces(
+            model=get_value_at_index(portrait_own_inited_models['facewarppipebuilder_31'], 0),
+            image=get_value_at_index(loadimage_24, 0),
+        )
         preprocnewgetconds_68 = preprocnewgetconds.prepare(
             template_id=template_id,
             is_front="False",
             model=get_value_at_index(portrait_own_inited_models['preprocnewbuildpipe_67'], 0),
             src_img=get_value_at_index(loadimage_24, 0),
+            faces=get_value_at_index(facewarpdetectfacesimginput_77, 0),
         )
 
         preprocnewsplitconds_69 = preprocnewsplitconds.split(
             pipe_conditions=get_value_at_index(preprocnewgetconds_68, 0)
         )
 
+        gpenprocess_79 = gpenprocess.enhance_face(
+            aligned=False,
+            model=get_value_at_index(portrait_own_inited_models['gpenpbuildpipeline_59'], 0),
+            image=get_value_at_index(preprocnewsplitconds_69, 0),
+        )
+
         facewarpdetectfacesmethod_33 = facewarpdetectfacesmethod.detect_faces(
             model=get_value_at_index(portrait_own_inited_models['facewarppipebuilder_31'], 0),
-            image=get_value_at_index(preprocnewsplitconds_69, 0),
+            image=get_value_at_index(gpenprocess_79, 0),
         )
 
         facewarpgetfaces3dinfomethod_32 = (
             facewarpgetfaces3dinfomethod.get_faces_3dinfo(
                 model=get_value_at_index(portrait_own_inited_models['facewarppipebuilder_31'], 0),
-                image=get_value_at_index(preprocnewsplitconds_69, 0),
+                image=get_value_at_index(gpenprocess_79, 0),
                 faces=get_value_at_index(facewarpdetectfacesmethod_33, 0),
             )
         )
@@ -248,7 +262,7 @@ def ai_portrait_own(portrait_own_inited_models, image_path, template_id, abs_pat
                 facewarpwarp3dfaceimgmaskmethod_36, 0
             ),
             canny_control=get_value_at_index(facewarpwarp3dfaceimgmaskmethod_36, 2),
-            user_image=get_value_at_index(preprocnewsplitconds_69, 0),
+            user_image=get_value_at_index(gpenprocess_79, 0),
             mask=get_value_at_index(facewarpwarp3dfaceimgmaskmethod_36, 1),
         )
 
@@ -273,7 +287,7 @@ def ai_portrait_own(portrait_own_inited_models, image_path, template_id, abs_pat
         faceswapdetectpts_56 = faceswapdetectpts.detect_face_pts(
             ptstype="5",
             model=get_value_at_index(portrait_own_inited_models['faceswappipebuilder_51'], 0),
-            src_image=get_value_at_index(preprocnewsplitconds_69, 0),
+            src_image=get_value_at_index(gpenprocess_79, 0),
             src_faces=get_value_at_index(facewarpdetectfacesmethod_33, 0),
         )
 
@@ -286,7 +300,7 @@ def ai_portrait_own(portrait_own_inited_models, image_path, template_id, abs_pat
 
         faceswapmethod_53 = faceswapmethod.swap_face(
             model=get_value_at_index(portrait_own_inited_models['faceswappipebuilder_51'], 0),
-            src_image=get_value_at_index(preprocnewsplitconds_69, 0),
+            src_image=get_value_at_index(gpenprocess_79, 0),
             two_stage_image=get_value_at_index(facewarpwarp3dfaceimgmethod_70, 0),
             source_5pts=get_value_at_index(faceswapdetectpts_56, 0),
             target_5pts=get_value_at_index(faceswapdetectpts_54, 0),
