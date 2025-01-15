@@ -189,6 +189,7 @@ def oneface_swap_process(oneface_swap_inited_models, image_path, template_id, ab
         facewarpdetectfacesimginput_37 = facewarpdetectfacesimginput.detect_faces(
             model=get_value_at_index(oneface_swap_inited_models['facewarppipebuilder_11'], 0),
             image=get_value_at_index(loadimage_10, 0),
+            is_bgr=False,
         )
 
         preprocswapgetconds_35 = preprocswapgetconds.prepare(
@@ -196,6 +197,7 @@ def oneface_swap_process(oneface_swap_inited_models, image_path, template_id, ab
             model=get_value_at_index(oneface_swap_inited_models['preprocswapbuildpipe_34'], 0),
             src_img=get_value_at_index(loadimage_10, 0),
             faces=get_value_at_index(facewarpdetectfacesimginput_37, 0),
+            is_bgr=False,
         )
 
         # gpenprocess_39 = gpenprocess.enhance_face(

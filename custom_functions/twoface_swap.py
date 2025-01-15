@@ -173,11 +173,13 @@ def twoface_swap_process(twoface_swap_inited_models, image_left, image_right, te
         facewarpdetectfacesimginput_38 = facewarpdetectfacesimginput.detect_faces(
             model=get_value_at_index(twoface_swap_inited_models['facewarppipebuilder_23'], 0),
             image=get_value_at_index(loadimage_12, 0),
+            is_bgr=False,
         )
 
         facewarpdetectfacesimginput_39 = facewarpdetectfacesimginput.detect_faces(
             model=get_value_at_index(twoface_swap_inited_models['facewarppipebuilder_23'], 0),
             image=get_value_at_index(loadimage_1, 0),
+            is_bgr=False,
         )
 
         preproctwofacesswapgetconds_28 = preproctwofacesswapgetconds.prepare(
@@ -188,6 +190,7 @@ def twoface_swap_process(twoface_swap_inited_models, image_left, image_right, te
             src_img2=get_value_at_index(loadimage_1, 0),
             faces1=get_value_at_index(facewarpdetectfacesimginput_38, 0),
             faces2=get_value_at_index(facewarpdetectfacesimginput_39, 0),
+            is_bgr=False,
         )
 
         facewarpdetectfacesmethod_24 = facewarpdetectfacesmethod.detect_faces(
