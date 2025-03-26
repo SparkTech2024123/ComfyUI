@@ -538,7 +538,7 @@ def trans_style_process(inited_models, image_path, style_type=StyleType.CLAY, \
             print(f"使用随机种子: {seed}")
             samplercustom_30 = samplercustom.sample(
                 add_noise=True,
-                noise_seed=seed,
+                noise_seed=777,
                 cfg=7,
                 model=get_value_at_index(automatic_cfg_28, 0),
                 positive=get_value_at_index(acn_advancedcontrolnetapply_38, 0),
@@ -585,26 +585,53 @@ if __name__ == "__main__":
         trans_style_inited_models = init_trans_style_models()
         
         # 处理图像（使用默认的clay风格）
-        for i in range(10):
-            print("正在处理图像（clay风格）...")
-            img_path = "./submodules/VisualForge/ComfyUI/input/casual_female_0.jpg"
-            final_img_clay = trans_style_process(trans_style_inited_models, img_path, StyleType.CLAY)
-            
-            # 保存clay风格结果
-            import cv2
-            cv2.imwrite('trans_style_clay_output.png', final_img_clay)
-            print("已保存clay风格结果")
-            
-            # 清理GPU内存
-            cleanup_gpu_memory()
-            
-            # 处理图像（使用水墨风格）
-            print("正在处理图像（水墨风格）...")
-            final_img_ink = trans_style_process(trans_style_inited_models, img_path, StyleType.DUANWU_INK)
-            
-            # # 保存水墨风格结果
-            # cv2.imwrite('trans_style_ink_output.png', final_img_ink)
-            # print("已保存水墨风格结果")
+        # for i in range(10):
+        print("正在处理图像（clay风格）...")
+        img_path = "./input/Txiaobaiqun.jpg"
+        final_img_clay = trans_style_process(trans_style_inited_models, img_path, StyleType.CLAY)
+        
+        # 保存clay风格结果
+        import cv2
+        cv2.imwrite('trans_style_clay_output.png', final_img_clay)
+        print("已保存clay风格结果")
+        
+        # 清理GPU内存
+        cleanup_gpu_memory()    
+        
+        # 处理图像（使用水墨风格）
+        print("正在处理图像（水墨风格）...")
+        final_img_ink = trans_style_process(trans_style_inited_models, img_path, StyleType.DUANWU_INK)
+        
+        # 保存水墨风格结果
+        cv2.imwrite('trans_style_ink_output.png', final_img_ink)
+        print("已保存水墨风格结果")
+        
+        # 最终清理
+        cleanup_gpu_memory()
+        
+        # 处理图像（使用赛博风格）
+        print("正在处理图像（赛博风格）...")
+        final_img_cyber = trans_style_process(trans_style_inited_models, img_path, StyleType.SAIBO_GUFENG)
+        
+        # 保存赛博风格结果
+        cv2.imwrite('trans_style_cyber_output.png', final_img_cyber)
+        print("已保存赛博风格结果")
+        
+        # 处理图像（使用宫崎骏风格）
+        print("正在处理图像（宫崎骏风格）...")
+        final_img_ghibli = trans_style_process(trans_style_inited_models, img_path, StyleType.GHIBLI_STYLE)
+        
+        # 保存宫崎骏风格结果
+        cv2.imwrite('trans_style_ghibli_output.png', final_img_ghibli)
+        print("已保存宫崎骏风格结果")
+        
+        # 处理图像（使用唐国风格）
+        print("正在处理图像（唐国风格）...")
+        final_img_tangguo = trans_style_process(trans_style_inited_models, img_path, StyleType.TANGGUO)
+        
+        # 保存唐国风格结果
+        cv2.imwrite('trans_style_tangguo_output.png', final_img_tangguo)
+        print("已保存唐国风格结果")
         
         # 最终清理
         cleanup_gpu_memory()
