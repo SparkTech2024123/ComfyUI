@@ -193,11 +193,11 @@ def oneface_swap_process(oneface_swap_inited_models, image_path, template_id, ab
         )
 
         preprocswapgetconds_35 = preprocswapgetconds.prepare(
-            template_id="christmas/female-10",
+            template_id=template_id,
             model=get_value_at_index(oneface_swap_inited_models['preprocswapbuildpipe_34'], 0),
             src_img=get_value_at_index(loadimage_10, 0),
             faces=get_value_at_index(facewarpdetectfacesimginput_37, 0),
-            is_bgr=False,
+            # is_bgr=False,
         )
 
         # gpenprocess_39 = gpenprocess.enhance_face(
