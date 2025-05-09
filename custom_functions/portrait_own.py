@@ -116,6 +116,9 @@ from nodes import NODE_CLASS_MAPPINGS, LoadImage
 
 def init_portrait_own_models():
     import_custom_nodes()
+    comfyui_path = find_path("ComfyUI")
+    model_root = os.path.join(comfyui_path, "models") if comfyui_path else "models"
+    human_mask_path = os.path.join(model_root, "human_mask")
     with torch.inference_mode():
         facewarppipebuilder = NODE_CLASS_MAPPINGS["FaceWarpPipeBuilder"]()
         facewarppipebuilder_31 = facewarppipebuilder.load_models(
@@ -167,6 +170,10 @@ def init_portrait_own_models():
             wd14_cgpath="wd14_tagger"
         )
         
+        # 使用PortraitModelLoader替代BirefnetModelLoaderNode
+        portraitmodelloader = NODE_CLASS_MAPPINGS["PortraitModelLoader"]()
+        portrait_models = portraitmodelloader.load_portrait_models(model_root=human_mask_path)
+        
         return {
             "facewarppipebuilder_31": facewarppipebuilder_31,
             "pulidmodelsloader_34": pulidmodelsloader_34,
@@ -174,6 +181,7 @@ def init_portrait_own_models():
             "srblendbuildpipe_58": srblendbuildpipe_58,
             "gpenpbuildpipeline_59": gpenpbuildipeline_59,
             "preprocnewbuildpipe_67": preprocnewbuildpipe_67,
+            "portrait_models": portrait_models,
         }
 
 def portrait_own_process(flux_inited_models, image_path, template_id, abs_path=True, is_ndarray=False):
@@ -203,14 +211,9 @@ def portrait_own_process(flux_inited_models, image_path, template_id, abs_path=T
         faceswapmethod = NODE_CLASS_MAPPINGS["FaceSwapMethod"]()
         srblendprocess = NODE_CLASS_MAPPINGS["SrBlendProcess"]()
         previewnumpy = NODE_CLASS_MAPPINGS["PreviewNumpy"]()
-
-        # for q in range(1):
-        # import debugpy
-        # debugpy.listen(("localhost", 3453))  # 更换端口
-        # print("Waiting for debugger attach...")
-        # debugpy.wait_for_client()
-        # # 你的实际代码
-        # print("Hello, world!")
+        # 替换BirefnetMattingProcessorNode为PortraitMaskGenerator和ImageAlphaMaskReplacer
+        portraitmaskgenerator = NODE_CLASS_MAPPINGS["PortraitMaskGenerator"]()
+        imagealphamskreplacer = NODE_CLASS_MAPPINGS["ImageAlphaMaskReplacer"]()
 
         facewarpdetectfacesimginput_77 = facewarpdetectfacesimginput.detect_faces(
             model=get_value_at_index(flux_inited_models['facewarppipebuilder_31'], 0),
@@ -264,7 +267,7 @@ def portrait_own_process(flux_inited_models, image_path, template_id, abs_path=T
             prompt=get_value_at_index(preprocnewsplitconds_69, 1),
             negative_prompt=get_value_at_index(preprocnewsplitconds_69, 2),
             strength=0.7000000000000001,
-            num_steps=14,
+            num_steps=16,
             model=get_value_at_index(flux_inited_models['pulidmodelsloader_34'], 0),
             template_image=get_value_at_index(
                 facewarpwarp3dfaceimgmaskmethod_36, 0
@@ -327,7 +330,32 @@ def portrait_own_process(flux_inited_models, image_path, template_id, abs_path=T
             src_img=get_value_at_index(gpenprocess_60, 0),
         )
 
-        outimg = get_value_at_index(final_img, 0) * 255.
+        # 使用PortraitMaskGenerator和ImageAlphaMaskReplacer处理图像，生成带Alpha通道的图像
+        if template_id.startswith("IDphotos/"):
+            # 使用PortraitMaskGenerator生成人像蒙版
+            masks = portraitmaskgenerator.generate_portrait_mask(
+                image=final_img,
+                portrait_models=get_value_at_index(flux_inited_models['portrait_models'], 0),
+                conf_threshold=0.25,
+                iou_threshold=0.50,
+                human_targets="person",
+                matting_threshold=0.10,
+                min_box_area_rate=0.0012
+            )
+            
+            # 使用小蒙版(small_mask)作为透明度蒙版
+            big_mask = get_value_at_index(masks, 0)
+            
+            # 使用ImageAlphaMaskReplacer应用蒙版到图像
+            alpha_img = imagealphamskreplacer.replace_alpha_with_mask(
+                image=final_img,
+                mask=big_mask
+            )
+        else:
+            alpha_img = final_img
+
+        # 将处理后的图像转换为numpy数组并返回
+        outimg = get_value_at_index(alpha_img, 0).squeeze(0) * 255.
         return outimg.cpu().numpy().astype(np.uint8)
 
 import numpy as np
@@ -340,4 +368,9 @@ if __name__ == "__main__":
     for i in range(10):
         final_img = portrait_own_process(portrait_own_inited_models, image, "formal/female-formal-1", is_ndarray=True)
     
-    cv2.imwrite('fuckaigc.png', final_img)
+    # 保存带Alpha通道的图像
+    # 对于4通道图像，需要使用RGBA格式保存
+    if final_img.shape[2] == 4:
+        cv2.imwrite('fuckaigc.png', final_img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    else:
+        cv2.imwrite('fuckaigc.png', final_img)
