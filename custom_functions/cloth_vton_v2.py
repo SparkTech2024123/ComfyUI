@@ -271,49 +271,50 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             image=get_value_at_index(resized_clothing, 0),
         )
         
-        # 生成人像蒙版
         portraitmaskgenerator = NODE_CLASS_MAPPINGS["PortraitMaskGenerator"]()
-        portrait_mask = portraitmaskgenerator.generate_portrait_mask(
-            conf_threshold=0.25,
-            iou_threshold=0.5,
-            human_targets="person",
-            matting_threshold=0.1,
-            min_box_area_rate=0.0012,
-            image=get_value_at_index(padded_clothing, 0),
-            portrait_models=get_value_at_index(models["portrait_model"], 0),
-        )
-        
-        # 蒙版形态学处理
         maskmorphology = NODE_CLASS_MAPPINGS["MaskMorphology"]()
-        morphed_mask = maskmorphology.process_mask(
-            pixels=-5,
-            use_split_mode=False,
-            upper_pixels=5,
-            lower_pixels=5,
-            feather_split=0,
-            mask=get_value_at_index(portrait_mask, 0),
-        )
-        
-        # 反转蒙版
         invertmask = NODE_CLASS_MAPPINGS["InvertMask"]()
-        inverted_mask = invertmask.invert(
-            mask=get_value_at_index(morphed_mask, 0)
-        )
-        
-        # 蒙版转图像
         masktoimage = NODE_CLASS_MAPPINGS["MaskToImage"]()
-        mask_image = masktoimage.mask_to_image(
-            mask=get_value_at_index(inverted_mask, 0)
-        )
-        
-        # 图像蒙版混合
         imagemaskblender = NODE_CLASS_MAPPINGS["ImageMaskBlender"]()
-        blended_clothing = imagemaskblender.blend_images(
-            feather=0,
-            image_fg=get_value_at_index(padded_clothing, 0),
-            image_bg=get_value_at_index(mask_image, 0),
-            mask=get_value_at_index(morphed_mask, 0),
-        )
+        # # 生成人像蒙版
+        # portrait_mask = portraitmaskgenerator.generate_portrait_mask(
+        #     conf_threshold=0.25,
+        #     iou_threshold=0.5,
+        #     human_targets="person",
+        #     matting_threshold=0.1,
+        #     min_box_area_rate=0.0012,
+        #     image=get_value_at_index(padded_clothing, 0),
+        #     portrait_models=get_value_at_index(models["portrait_model"], 0),
+        # )
+        
+        # # 蒙版形态学处理
+        # morphed_mask = maskmorphology.process_mask(
+        #     pixels=-5,
+        #     use_split_mode=False,
+        #     upper_pixels=5,
+        #     lower_pixels=5,
+        #     feather_split=0,
+        #     mask=get_value_at_index(portrait_mask, 0),
+        # )
+        
+        # # 反转蒙版
+        # inverted_mask = invertmask.invert(
+        #     mask=get_value_at_index(morphed_mask, 0)
+        # )
+        
+        # # 蒙版转图像
+        # mask_image = masktoimage.mask_to_image(
+        #     mask=get_value_at_index(inverted_mask, 0)
+        # )
+        
+        # # 图像蒙版混合
+        # blended_clothing = imagemaskblender.blend_images(
+        #     feather=0,
+        #     image_fg=get_value_at_index(padded_clothing, 0),
+        #     image_bg=get_value_at_index(mask_image, 0),
+        #     mask=get_value_at_index(morphed_mask, 0),
+        # )
+        blended_clothing = padded_clothing
         
         # 处理模特图像
         resized_model_input = imageresizekj.resize(
