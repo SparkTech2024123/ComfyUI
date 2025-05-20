@@ -67,15 +67,12 @@ def add_comfyui_directory_to_sys_path() -> None:
 
 def add_extra_model_paths() -> None:
     """
-    Parse the optional extra_model_paths.yaml file and add the parsed paths to the sys.path.
+    解析可选的extra_model_paths.yaml文件并将解析的路径添加到sys.path。
     """
     try:
-        from main import load_extra_path_config
-    except ImportError:
-        print(
-            "Could not import load_extra_path_config from main.py. Looking in utils.extra_config instead."
-        )
         from utils.extra_config import load_extra_path_config
+    except ImportError:
+        print("Could not import load_extra_path_config from utils.extra_config")
 
     extra_model_paths = find_path("extra_model_paths.yaml")
 
@@ -86,7 +83,7 @@ def add_extra_model_paths() -> None:
 
 
 add_comfyui_directory_to_sys_path()
-# add_extra_model_paths()
+add_extra_model_paths()
 
 
 def import_custom_nodes() -> None:
@@ -126,7 +123,9 @@ def init_portrait_matting_models():
     with torch.inference_mode():
         # 加载人像模型
         portraitmodelloader = NODE_CLASS_MAPPINGS["PortraitModelLoader"]()
-        portrait_models = portraitmodelloader.load_portrait_models(model_root=human_mask_path)
+        portrait_models = portraitmodelloader.load_portrait_models(
+            model_root=human_mask_path, device="cuda:0 (NVIDIA GeForce RTX 3090)"
+        )
         
         return {
             "portrait_models": portrait_models,

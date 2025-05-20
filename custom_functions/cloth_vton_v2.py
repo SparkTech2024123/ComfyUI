@@ -55,25 +55,24 @@ def add_comfyui_directory_to_sys_path() -> None:
 
 
 def add_extra_model_paths() -> None:
-    """解析extra_model_paths.yaml文件并添加路径到sys.path。"""
+    """
+    解析可选的extra_model_paths.yaml文件并将解析的路径添加到sys.path。
+    """
     try:
-        from main import load_extra_path_config
-    except ImportError:
-        print(
-            "无法从main.py导入load_extra_path_config，尝试从utils.extra_config导入。"
-        )
         from utils.extra_config import load_extra_path_config
+    except ImportError:
+        print("Could not import load_extra_path_config from utils.extra_config")
 
     extra_model_paths = find_path("extra_model_paths.yaml")
 
     if extra_model_paths is not None:
         load_extra_path_config(extra_model_paths)
     else:
-        print("无法找到extra_model_paths配置文件。")
+        print("Could not find the extra_model_paths config file.")
 
 
 add_comfyui_directory_to_sys_path()
-# add_extra_model_paths()
+add_extra_model_paths()
 
 
 def import_custom_nodes() -> None:
@@ -140,12 +139,16 @@ def init_vton_models():
         
         # 加载人脸模型
         facemodelloader = NODE_CLASS_MAPPINGS["FaceModelLoader"]()
-        facemodelloader_result = facemodelloader.load_face_models(model_root=model_root)
+        facemodelloader_result = facemodelloader.load_face_models(
+            model_root=model_root,
+            device="cuda:1 (NVIDIA GeForce RTX 3090)"
+        )
         
         # 加载人像模型
         portraitmodelloader = NODE_CLASS_MAPPINGS["PortraitModelLoader"]()
         portraitmodelloader_result = portraitmodelloader.load_portrait_models(
-            model_root=human_mask_path
+            model_root=human_mask_path,
+            device="cuda:1 (NVIDIA GeForce RTX 3090)"
         )
         
         # 加载UNET GGUF模型
@@ -172,11 +175,39 @@ def init_vton_models():
             model=get_value_at_index(unetloader_result, 0),
         )
         
+        # 添加FluxForwardOverrider节点
+        fluxforwardoverrider = NODE_CLASS_MAPPINGS["FluxForwardOverrider"]()
+        fluxforwardoverrider_result = fluxforwardoverrider.apply_patch(
+            model=get_value_at_index(catvton_lora_result, 0)
+        )
+        
+        # 添加ApplyTeaCachePatch节点
+        applyteacachepatch = NODE_CLASS_MAPPINGS["ApplyTeaCachePatch"]()
+        applyteacachepatch_result = applyteacachepatch.apply_patch(
+            rel_l1_thresh=0.25,
+            cache_device="main_device",
+            wan_coefficients="disabled",
+            model=get_value_at_index(fluxforwardoverrider_result, 0),
+        )
+        
         # 加载增强Lora模型
         enhance_lora_result = loraloadermodelonly.load_lora_model_only(
             lora_name="flux1_enhance_lora.safetensors",
             strength_model=0.35,
             model=get_value_at_index(unetloadergguf_result, 0),
+        )
+        
+        # 为增强Lora模型添加FluxForwardOverrider
+        fluxforwardoverrider_enhance = fluxforwardoverrider.apply_patch(
+            model=get_value_at_index(enhance_lora_result, 0)
+        )
+        
+        # 为增强Lora模型添加ApplyTeaCachePatch
+        applyteacachepatch_enhance = applyteacachepatch.apply_patch(
+            rel_l1_thresh=0.25,
+            cache_device="main_device",
+            wan_coefficients="disabled",
+            model=get_value_at_index(fluxforwardoverrider_enhance, 0),
         )
         
         return {
@@ -189,7 +220,9 @@ def init_vton_models():
             "srblend": srblendbuildpipe_result,
             "florence2_model": layermask_loadflorence2model_result,
             "catvton_lora": catvton_lora_result,
-            "enhance_lora": enhance_lora_result
+            "enhance_lora": enhance_lora_result,
+            "catvton_lora_patched": applyteacachepatch_result,
+            "enhance_lora_patched": applyteacachepatch_enhance
         }
 
 
@@ -276,44 +309,7 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
         invertmask = NODE_CLASS_MAPPINGS["InvertMask"]()
         masktoimage = NODE_CLASS_MAPPINGS["MaskToImage"]()
         imagemaskblender = NODE_CLASS_MAPPINGS["ImageMaskBlender"]()
-        # # 生成人像蒙版
-        # portrait_mask = portraitmaskgenerator.generate_portrait_mask(
-        #     conf_threshold=0.25,
-        #     iou_threshold=0.5,
-        #     human_targets="person",
-        #     matting_threshold=0.1,
-        #     min_box_area_rate=0.0012,
-        #     image=get_value_at_index(padded_clothing, 0),
-        #     portrait_models=get_value_at_index(models["portrait_model"], 0),
-        # )
         
-        # # 蒙版形态学处理
-        # morphed_mask = maskmorphology.process_mask(
-        #     pixels=-5,
-        #     use_split_mode=False,
-        #     upper_pixels=5,
-        #     lower_pixels=5,
-        #     feather_split=0,
-        #     mask=get_value_at_index(portrait_mask, 0),
-        # )
-        
-        # # 反转蒙版
-        # inverted_mask = invertmask.invert(
-        #     mask=get_value_at_index(morphed_mask, 0)
-        # )
-        
-        # # 蒙版转图像
-        # mask_image = masktoimage.mask_to_image(
-        #     mask=get_value_at_index(inverted_mask, 0)
-        # )
-        
-        # # 图像蒙版混合
-        # blended_clothing = imagemaskblender.blend_images(
-        #     feather=0,
-        #     image_fg=get_value_at_index(padded_clothing, 0),
-        #     image_bg=get_value_at_index(mask_image, 0),
-        #     mask=get_value_at_index(morphed_mask, 0),
-        # )
         blended_clothing = padded_clothing
         
         # 处理模特图像
@@ -416,16 +412,16 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             # 当seed不为None时使用随机值
             seed = random.randint(1, 2 ** 64)
             
-        # 第一次采样
+        # 第一次采样 - 使用应用了补丁的模型
         ksampler = NODE_CLASS_MAPPINGS["KSampler"]()
         sampler_result1 = ksampler.sample(
             seed=seed,
-            steps=5,
-            cfg=3.5,
+            steps=7,
+            cfg=1.5,
             sampler_name="dpmpp_2m",
             scheduler="simple",
             denoise=1,
-            model=get_value_at_index(models["catvton_lora"], 0),
+            model=get_value_at_index(models["catvton_lora_patched"], 0),
             positive=get_value_at_index(inpaint_conditioning, 0),
             negative=get_value_at_index(inpaint_conditioning, 1),
             latent_image=get_value_at_index(inpaint_conditioning, 2),
@@ -501,15 +497,15 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             mask=get_value_at_index(masked_images2, 1),
         )
         
-        # 第二次采样
+        # 第二次采样 - 使用应用了补丁的模型
         sampler_result2 = ksampler.sample(
             seed=seed,
-            steps=15,
+            steps=17,
             cfg=3.5,
             sampler_name="dpmpp_2m",
             scheduler="simple",
             denoise=1,
-            model=get_value_at_index(models["catvton_lora"], 0),
+            model=get_value_at_index(models["catvton_lora_patched"], 0),
             positive=get_value_at_index(inpaint_conditioning2, 0),
             negative=get_value_at_index(inpaint_conditioning2, 1),
             latent_image=get_value_at_index(inpaint_conditioning2, 2),
@@ -638,15 +634,15 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             mask=get_value_at_index(final_process_mask, 0),
         )
         
-        # 最终增强采样
+        # 最终增强采样 - 使用应用了补丁的增强模型
         enhanced_sampler_result = ksampler.sample(
             seed=seed,
-            steps=8,
+            steps=9,
             cfg=1,
             sampler_name="dpmpp_2m",
             scheduler="sgm_uniform",
             denoise=0.35,
-            model=get_value_at_index(models["enhance_lora"], 0),
+            model=get_value_at_index(models["enhance_lora_patched"], 0),
             positive=get_value_at_index(inpaint_conditioning_final, 0),
             negative=get_value_at_index(inpaint_conditioning_final, 1),
             latent_image=get_value_at_index(inpaint_conditioning_final, 2),
