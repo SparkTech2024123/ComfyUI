@@ -197,6 +197,11 @@ def init_flux_portraitown_models():
         portraitmodelloader_168 = portraitmodelloader.load_portrait_models(
             model_root=human_mask_path, device="cuda:1 (NVIDIA GeForce RTX 3090)"
         )
+
+        facemodelloader = NODE_CLASS_MAPPINGS["FaceModelLoader"]()
+        facemodelloader_169 = facemodelloader.load_face_models(
+            model_root=model_root, device="cuda:1 (NVIDIA GeForce RTX 3090)"
+        )
         
         return {
             "facewarppipebuilder_31": facewarppipebuilder_31,
@@ -212,6 +217,7 @@ def init_flux_portraitown_models():
             "pulidfluxevacliploader_82_2": pulidfluxevacliploader_82_2,
             "unetloader_82_3": unetloader_82_3,
             "portraitmodelloader_168": portraitmodelloader_168,
+            "facemodelloader_169": facemodelloader_169,
         }
 
 
@@ -512,10 +518,32 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
                 portrait_models=get_value_at_index(flux_inited_models["portraitmodelloader_168"], 0),
             )
 
+            facemaskgenerator = NODE_CLASS_MAPPINGS["FaceMaskGenerator"]()
+            facemaskgenerator_169 = facemaskgenerator.generate_faces_mask(
+                max_face=False,
+                num_faces=1,
+                dilate_pixels=5,
+                image=get_value_at_index(srblendprocess_71, 1),
+                face_models=get_value_at_index(flux_inited_models["facemodelloader_169"], 0),
+            )
+
+            invertmask = NODE_CLASS_MAPPINGS["InvertMask"]()
+            invertmask_170 = invertmask.invert(
+                mask=get_value_at_index(facemaskgenerator_169, 0),
+            )
+
+            maskmathoperations = NODE_CLASS_MAPPINGS["MaskMathOperations"]()
+            maskmathoperations_171 = maskmathoperations.perform_mask_operation(
+                operation="max",
+                clamp_result=True,
+                mask_a=get_value_at_index(invertmask_170, 0),
+                mask_b=get_value_at_index(portraitmaskgenerator_169, 0),
+            )
+
             imagealphamaskreplacer = NODE_CLASS_MAPPINGS["ImageAlphaMaskReplacer"]()
             imagealphamaskreplacer_171 = imagealphamaskreplacer.replace_alpha_with_mask(
                 image=get_value_at_index(srblendprocess_71, 1),
-                mask=get_value_at_index(portraitmaskgenerator_169, 0),
+                mask=get_value_at_index(maskmathoperations_171, 0),
             )
             
             final_img = get_value_at_index(imagealphamaskreplacer_171, 0)
