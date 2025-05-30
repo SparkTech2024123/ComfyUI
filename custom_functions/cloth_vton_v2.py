@@ -161,11 +161,11 @@ def init_vton_models():
             lut_path="lut", gpu_choose="cuda:1", sr_type="ESRGAN", half=True
         )
         
-        # 加载Florence2模型
-        layermask_loadflorence2model = NODE_CLASS_MAPPINGS["LayerMask: LoadFlorence2Model"]()
-        layermask_loadflorence2model_result = layermask_loadflorence2model.load(
-            version="CogFlorence-2.1-Large"
-        )
+        # # 加载Florence2模型
+        # layermask_loadflorence2model = NODE_CLASS_MAPPINGS["LayerMask: LoadFlorence2Model"]()
+        # layermask_loadflorence2model_result = layermask_loadflorence2model.load(
+        #     version="CogFlorence-2.1-Large"
+        # )
         
         # 加载Lora模型
         loraloadermodelonly = NODE_CLASS_MAPPINGS["LoraLoaderModelOnly"]()
@@ -218,7 +218,7 @@ def init_vton_models():
             "portrait_model": portraitmodelloader_result,
             "unet_gguf": unetloadergguf_result,
             "srblend": srblendbuildpipe_result,
-            "florence2_model": layermask_loadflorence2model_result,
+            # "florence2_model": layermask_loadflorence2model_result,
             "catvton_lora": catvton_lora_result,
             "enhance_lora": enhance_lora_result,
             "catvton_lora_patched": applyteacachepatch_result,
@@ -522,18 +522,18 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             image=get_value_at_index(decoded_image2, 0)
         )
         
-        # 使用Florence2模型生成详细描述
-        layerutility_florence2image2prompt = NODE_CLASS_MAPPINGS["LayerUtility: Florence2Image2Prompt"]()
-        florence2_caption = layerutility_florence2image2prompt.florence2_image2prompt(
-            task="more detailed caption",
-            text_input="",
-            max_new_tokens=1024,
-            num_beams=3,
-            do_sample=False,
-            fill_mask=False,
-            florence2_model=get_value_at_index(models["florence2_model"], 0),
-            image=get_value_at_index(right_half2, 0),
-        )
+        # # 使用Florence2模型生成详细描述
+        # layerutility_florence2image2prompt = NODE_CLASS_MAPPINGS["LayerUtility: Florence2Image2Prompt"]()
+        # florence2_caption = layerutility_florence2image2prompt.florence2_image2prompt(
+        #     task="more detailed caption",
+        #     text_input="",
+        #     max_new_tokens=1024,
+        #     num_beams=3,
+        #     do_sample=False,
+        #     fill_mask=False,
+        #     florence2_model=get_value_at_index(models["florence2_model"], 0),
+        #     image=get_value_at_index(right_half2, 0),
+        # )
         
         # 准备高质量提示
         textinput_ = NODE_CLASS_MAPPINGS["TextInput_"]()
@@ -541,19 +541,19 @@ def cloth_vton_process(models, clothing_path, model_image_path, is_clothing_temp
             text="high quality, detailed, photograph , hd, 8k , 4k , sharp, highly detailed"
         )
         
-        # 合并提示
-        text_concatenate_jps = NODE_CLASS_MAPPINGS["Text Concatenate (JPS)"]()
-        combined_prompt = text_concatenate_jps.get_contxt(
-            delimiter="comma",
-            text1=get_value_at_index(quality_prompt, 0),
-            text2=get_value_at_index(florence2_caption, 0),
-        )
+        # # 合并提示
+        # text_concatenate_jps = NODE_CLASS_MAPPINGS["Text Concatenate (JPS)"]()
+        # combined_prompt = text_concatenate_jps.get_contxt(
+        #     delimiter="comma",
+        #     text1=get_value_at_index(quality_prompt, 0),
+        #     text2=get_value_at_index(florence2_caption, 0),
+        # )
         
         # Flux文本编码
         cliptextencodeflux = NODE_CLASS_MAPPINGS["CLIPTextEncodeFlux"]()
         positive_flux = cliptextencodeflux.encode(
-            clip_l=get_value_at_index(combined_prompt, 0),
-            t5xxl=get_value_at_index(combined_prompt, 0),
+            clip_l=get_value_at_index(quality_prompt, 0),
+            t5xxl=get_value_at_index(quality_prompt, 0),
             guidance=3.5,
             clip=get_value_at_index(models["clip"], 0),
         )

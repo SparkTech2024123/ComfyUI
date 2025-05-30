@@ -170,6 +170,17 @@ def init_flux_portraitown_models():
         vaeloader = NODE_CLASS_MAPPINGS["VAELoader"]()
         vaeloader_99 = vaeloader.load_vae(vae_name="ae.safetensors")
         
+        # 设置CLIP和VAE设备
+        overrideclipdevice = NODE_CLASS_MAPPINGS["OverrideCLIPDevice"]()
+        overrideclipdevice_155_3 = overrideclipdevice.patch(
+            device="cuda:1", clip=get_value_at_index(dualcliploader_155_1, 0)
+        )
+
+        overridevaedevice = NODE_CLASS_MAPPINGS["OverrideVAEDevice"]()
+        overridevaedevice_106 = overridevaedevice.patch(
+            device="cuda:1", vae=get_value_at_index(vaeloader_99, 0)
+        )
+        
         controlnetloader = NODE_CLASS_MAPPINGS["ControlNetLoader"]()
         controlnetloader_155_0 = controlnetloader.load_controlnet(
             control_net_name="flux1_instantx_union_control_pro_2.0.safetensors"
@@ -209,8 +220,8 @@ def init_flux_portraitown_models():
             "srblendbuildpipe_58": srblendbuildpipe_58,
             "gpenpbuildpipeline_164": gpenpbuildpipeline_164,
             "preprocnewbuildpipe_67": preprocnewbuildpipe_67,
-            "dualcliploader_155_1": dualcliploader_155_1,
-            "vaeloader_99": vaeloader_99,
+            "overrideclipdevice_155_3": overrideclipdevice_155_3,
+            "overridevaedevice_106": overridevaedevice_106,
             "controlnetloader_155_0": controlnetloader_155_0,
             "pulidfluxmodelloader_82_0": pulidfluxmodelloader_82_0,
             "pulidfluxinsightfaceloader_82_1": pulidfluxinsightfaceloader_82_1,
@@ -303,29 +314,18 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
             template_canny_img=get_value_at_index(preprocnewsplitconds_69, 4),
         )
 
-        # 设置CLIP和VAE设备
-        overrideclipdevice = NODE_CLASS_MAPPINGS["OverrideCLIPDevice"]()
-        overrideclipdevice_155_3 = overrideclipdevice.patch(
-            device="cuda:1", clip=get_value_at_index(flux_inited_models["dualcliploader_155_1"], 0)
-        )
-
-        overridevaedevice = NODE_CLASS_MAPPINGS["OverrideVAEDevice"]()
-        overridevaedevice_106 = overridevaedevice.patch(
-            device="cuda:1", vae=get_value_at_index(flux_inited_models["vaeloader_99"], 0)
-        )
-
         # 准备控制网络
         setunioncontrolnettype = NODE_CLASS_MAPPINGS["SetUnionControlNetType"]()
         setunioncontrolnettype_155_2 = setunioncontrolnettype.set_controlnet_type(
             type="canny/lineart/anime_lineart/mlsd",
             control_net=get_value_at_index(flux_inited_models["controlnetloader_155_0"], 0),
         )
-
+        
         # 处理正面和负面提示词
         cliptextencode = NODE_CLASS_MAPPINGS["CLIPTextEncode"]()
         cliptextencode_155_6 = cliptextencode.encode(
             text=get_value_at_index(preprocnewsplitconds_69, 1),
-            clip=get_value_at_index(overrideclipdevice_155_3, 0),
+            clip=get_value_at_index(flux_inited_models["overrideclipdevice_155_3"], 0),
         )
 
         fluxguidance = NODE_CLASS_MAPPINGS["FluxGuidance"]()
@@ -335,7 +335,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
 
         cliptextencode_155_4 = cliptextencode.encode(
             text=negative_prompt_text,
-            clip=get_value_at_index(overrideclipdevice_155_3, 0),
+            clip=get_value_at_index(flux_inited_models["overrideclipdevice_155_3"], 0),
         )
 
         fluxguidance_155_5 = fluxguidance.append(
@@ -370,7 +370,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
             negative=get_value_at_index(fluxguidance_155_5, 0),
             control_net=get_value_at_index(setunioncontrolnettype_155_2, 0),
             image=get_value_at_index(convertnumpytotensor_103, 0),
-            vae=get_value_at_index(overridevaedevice_106, 0),
+            vae=get_value_at_index(flux_inited_models["overridevaedevice_106"], 0),
         )
 
         # 创建蒙版
@@ -385,7 +385,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
             noise_mask=True,
             positive=get_value_at_index(controlnetapplyadvanced_155_8, 0),
             negative=get_value_at_index(controlnetapplyadvanced_155_8, 1),
-            vae=get_value_at_index(overridevaedevice_106, 0),
+            vae=get_value_at_index(flux_inited_models["overridevaedevice_106"], 0),
             pixels=get_value_at_index(convertnumpytotensor_107, 0),
             mask=get_value_at_index(imagetomask_105, 0),
         )
@@ -437,7 +437,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
         vaedecode = NODE_CLASS_MAPPINGS["VAEDecode"]()
         vaedecode_114 = vaedecode.decode(
             samples=get_value_at_index(ksampler_123, 0),
-            vae=get_value_at_index(overridevaedevice_106, 0),
+            vae=get_value_at_index(flux_inited_models["overridevaedevice_106"], 0),
         )
 
         # 转换回numpy
