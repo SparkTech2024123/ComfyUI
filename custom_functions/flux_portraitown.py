@@ -183,7 +183,7 @@ def init_flux_portraitown_models():
         
         controlnetloader = NODE_CLASS_MAPPINGS["ControlNetLoader"]()
         controlnetloader_155_0 = controlnetloader.load_controlnet(
-            control_net_name="flux1_instantx_union_control_pro_2.0.safetensors"
+            control_net_name="flux-canny-controlnet-v3.safetensors"
         )
         
         pulidfluxmodelloader = NODE_CLASS_MAPPINGS["PulidFluxModelLoader"]()
@@ -315,11 +315,11 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
         )
 
         # 准备控制网络
-        setunioncontrolnettype = NODE_CLASS_MAPPINGS["SetUnionControlNetType"]()
-        setunioncontrolnettype_155_2 = setunioncontrolnettype.set_controlnet_type(
-            type="canny/lineart/anime_lineart/mlsd",
-            control_net=get_value_at_index(flux_inited_models["controlnetloader_155_0"], 0),
-        )
+        # setunioncontrolnettype = NODE_CLASS_MAPPINGS["SetUnionControlNetType"]()
+        # setunioncontrolnettype_155_2 = setunioncontrolnettype.set_controlnet_type(
+        #     type="canny/lineart/anime_lineart/mlsd",
+        #     control_net=get_value_at_index(flux_inited_models["controlnetloader_155_0"], 0),
+        # )
         
         # 处理正面和负面提示词
         cliptextencode = NODE_CLASS_MAPPINGS["CLIPTextEncode"]()
@@ -368,7 +368,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
             end_percent=0.8000000000000002,
             positive=get_value_at_index(fluxguidance_155_7, 0),
             negative=get_value_at_index(fluxguidance_155_5, 0),
-            control_net=get_value_at_index(setunioncontrolnettype_155_2, 0),
+            control_net=get_value_at_index(flux_inited_models["controlnetloader_155_0"], 0),
             image=get_value_at_index(convertnumpytotensor_103, 0),
             vae=get_value_at_index(flux_inited_models["overridevaedevice_106"], 0),
         )
@@ -393,7 +393,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
         # 应用PulidFlux
         applypulidflux = NODE_CLASS_MAPPINGS["ApplyPulidFlux"]()
         applypulidflux_82_4 = applypulidflux.apply_pulid_flux(
-            weight=0.7000000000000002,
+            weight=0.7500000000000002,
             start_at=0,
             end_at=1,
             model=get_value_at_index(flux_inited_models["unetloader_82_3"], 0),
@@ -423,7 +423,7 @@ def flux_portraitown_process(flux_inited_models, image_path, template_id="IDphot
         ksampler_123 = ksampler.sample(
             seed=710874769520552,
             steps=20,
-            cfg=1.5,
+            cfg=1.0,
             sampler_name="dpmpp_2m",
             scheduler="sgm_uniform",
             denoise=0.8600000000000002,
