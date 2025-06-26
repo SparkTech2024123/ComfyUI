@@ -396,18 +396,20 @@ class RemotePhotoSREnhanceNode:
 
     def _execute_workflow_shared_output(self, workflow, server_address, client_id):
         """执行工作流并使用共享内存输出"""
-        # 添加共享内存输出节点
-        output_shm_name = f"photo_sr_output_{uuid.uuid4().hex[:8]}"
+        # 添加共享内存输出节点 - 参考 remove_bg_api_node.py 的方式
+        output_shm_name = f"photo_sr_{uuid.uuid4().hex[:16]}"  # 使用更长的随机名称避免冲突
         workflow["save_image_shared_memory_node"] = {
             "inputs": {
                 "images": ["42", 0],
                 "shm_name": output_shm_name,
-                "output_format": "RGB",
+                "output_format": "RGB", 
                 "convert_rgb_to_bgr": False
             },
             "class_type": "SaveImageSharedMemory",
             "_meta": {"title": "Save Image (Shared Memory)"}
         }
+        
+        print(f"✓ Configured SaveImageSharedMemory with name: {output_shm_name}")
         
         # 执行工作流并获取元数据
         images_metadata = self._execute_workflow_and_get_images(workflow, server_address, client_id)
@@ -423,80 +425,97 @@ class RemotePhotoSREnhanceNode:
         print(f"DEBUG: UI data for save_image_shared_memory_node: {ui_data}")
         
         if not ui_data:
-            # 尝试使用预设的共享内存名称作为后备方案
-            print(f"No UI metadata received, trying to read from predefined shared memory: {output_shm_name}")
-            try:
-                # 连接到预设的共享内存
-                result_shm = shared_memory.SharedMemory(name=output_shm_name)
-                
-                # 从共享内存大小计算图像尺寸
-                buffer_size = result_shm.size
-                if buffer_size % 3 == 0:
-                    # 假设是RGB格式
-                    pixel_count = buffer_size // 3
-                    # 基于输入尺寸估算输出尺寸 (应该是2倍上采样)
-                    # 1080x1440 -> 2160x2880 = 2160 * 2880 * 3 = 18,662,400
-                    if pixel_count == 2160 * 2880:
-                        height, width = 2880, 2160
-                    elif pixel_count == 1080 * 1440:
-                        height, width = 1440, 1080
-                    else:
-                        # 动态计算
-                        import math
-                        height = int(math.sqrt(pixel_count))
-                        width = pixel_count // height
-                        # 调整到最接近的合理比例
-                        while width * height != pixel_count and height > 1:
-                            height -= 1
-                            width = pixel_count // height
-                    
-                    print(f"✓ Calculated image dimensions: {height}x{width}x3")
-                    
-                    # 重建图像
-                    image_array = np.ndarray((height, width, 3), dtype=np.uint8, buffer=result_shm.buf)
-                    result_copy = image_array.copy()
-                    
-                    # 清理共享内存
-                    result_shm.close()
-                    result_shm.unlink()
-                    
-                    print(f"✓ Successfully loaded image with shape: {result_copy.shape}")
-                    return result_copy
-                else:
-                    raise ValueError(f"Invalid buffer size for RGB image: {buffer_size}")
-                    
-            except Exception as e:
-                print(f"Failed to read from predefined shared memory: {e}")
-                raise RuntimeError(f"No shared memory metadata received and fallback failed: {e}")
+            print(f"✗ No UI metadata received from SaveImageSharedMemory node")
+            print("This usually means the SaveImageSharedMemory node failed to execute properly")
+            # 直接回退到WebSocket方案，不再尝试猜测
+            print("Falling back to WebSocket output method...")
+            return self._execute_workflow_websocket_output(workflow, server_address, client_id)
         
-        # 解析元数据 - ui_data 应该包含 shared_memory_info
+        # 解析 SaveImageSharedMemory 返回的完整元数据 - 参考 remove_bg_api_node.py 的实现
         shared_memory_info = None
+        
+        # 首先尝试从直接的 shared_memory_info 字段获取（remove_bg_api_node.py 的方式）
         if isinstance(ui_data, dict) and 'shared_memory_info' in ui_data:
-            shared_memory_info = ui_data['shared_memory_info'][0]  # 取第一个结果
-        else:
-            # 如果格式不对，尝试直接使用
-            shared_memory_info = ui_data
+            shared_memory_info_list = ui_data['shared_memory_info']
+            if isinstance(shared_memory_info_list, list) and len(shared_memory_info_list) > 0:
+                shared_memory_info = shared_memory_info_list[0]  # 取第一个结果
+                print(f"✓ Found shared_memory_info directly (remove_bg_api_node.py style):")
+                print(f"  - shm_name: {shared_memory_info.get('shm_name', 'N/A')}")
+                print(f"  - shape: {shared_memory_info.get('shape', 'N/A')}")
+                print(f"  - dtype: {shared_memory_info.get('dtype', 'N/A')}")
+                print(f"  - format: {shared_memory_info.get('format', 'N/A')}")
+                print(f"  - size: {shared_memory_info.get('size_mb', 'N/A')} MB")
         
-        if not shared_memory_info or 'shape' not in shared_memory_info:
-            raise RuntimeError(f"Invalid shared memory metadata format: {shared_memory_info}")
+        # 如果直接方式失败，尝试从UI字段获取（原始方式）
+        if not shared_memory_info and isinstance(ui_data, dict) and 'ui' in ui_data:
+            ui_inner = ui_data['ui']
+            if isinstance(ui_inner, dict) and 'shared_memory_info' in ui_inner:
+                shared_memory_info_list = ui_inner['shared_memory_info']
+                if isinstance(shared_memory_info_list, list) and len(shared_memory_info_list) > 0:
+                    shared_memory_info = shared_memory_info_list[0]
+                    print(f"✓ Found shared_memory_info in UI field (original style):")
+                    print(f"  - shm_name: {shared_memory_info.get('shm_name', 'N/A')}")
+                    print(f"  - shape: {shared_memory_info.get('shape', 'N/A')}")
+                    print(f"  - dtype: {shared_memory_info.get('dtype', 'N/A')}")
         
-        # 从共享内存读取结果
+        if not shared_memory_info:
+            print(f"Warning: No shared_memory_info found in any expected location")
+            print(f"UI data keys: {list(ui_data.keys()) if isinstance(ui_data, dict) else 'not a dict'}")
+            print(f"UI data content: {ui_data}")
+        
+        # 验证必需的参数
+        required_fields = ['shm_name', 'shape', 'dtype']
+        if not shared_memory_info or not isinstance(shared_memory_info, dict):
+            print(f"✗ shared_memory_info is not a valid dict: {shared_memory_info}")
+            print("Falling back to WebSocket output method...")
+            return self._execute_workflow_websocket_output(workflow, server_address, client_id)
+        
+        missing_fields = [field for field in required_fields if field not in shared_memory_info]
+        if missing_fields:
+            print(f"✗ Missing required fields in shared_memory_info: {missing_fields}")
+            print(f"Available fields: {list(shared_memory_info.keys())}")
+            print("Falling back to WebSocket output method...")
+            return self._execute_workflow_websocket_output(workflow, server_address, client_id)
+        
+        # 从共享内存读取结果 - 使用 SaveImageSharedMemory 提供的完整参数
         try:
-            # 获取正确的图像尺寸和数据类型
-            image_shape = shared_memory_info['shape']  # [height, width, channels]
-            image_dtype = shared_memory_info.get('dtype', 'uint8')
+            # 提取 SaveImageSharedMemory 返回的所有参数
             actual_shm_name = shared_memory_info['shm_name']
+            image_shape = shared_memory_info['shape']  # [height, width, channels]
+            image_dtype = shared_memory_info['dtype']  # 从节点直接获取，不使用默认值
+            output_format = shared_memory_info.get('format', 'RGB')
+            expected_size = shared_memory_info.get('size_bytes', 0)
             
-            print(f"✓ Reading image from shared memory:")
-            print(f"  - Name: {actual_shm_name}")
-            print(f"  - Shape: {image_shape}")
-            print(f"  - Dtype: {image_dtype}")
+            print(f"✓ Reading image from shared memory using SaveImageSharedMemory parameters:")
+            print(f"  - shm_name: {actual_shm_name}")
+            print(f"  - shape: {image_shape} (H×W×C)")
+            print(f"  - dtype: {image_dtype}")
+            print(f"  - format: {output_format}")
+            print(f"  - expected_size: {expected_size} bytes")
+            
+            # 验证图像形状
+            if not isinstance(image_shape, list) or len(image_shape) != 3:
+                raise ValueError(f"Invalid image shape: {image_shape}, expected [height, width, channels]")
+            
+            height, width, channels = image_shape
+            if channels not in [1, 3, 4]:
+                raise ValueError(f"Unsupported number of channels: {channels}")
             
             # 连接到共享内存
             result_shm = shared_memory.SharedMemory(name=actual_shm_name)
             
-            # 使用正确的尺寸重建图像
-            numpy_dtype = getattr(np, image_dtype)
+            # 验证共享内存大小
+            actual_size = result_shm.size
+            expected_size_calc = height * width * channels * np.dtype(image_dtype).itemsize
+            
+            if actual_size != expected_size_calc:
+                print(f"Warning: Shared memory size mismatch!")
+                print(f"  - Actual size: {actual_size} bytes")
+                print(f"  - Expected size: {expected_size_calc} bytes")
+                print(f"  - Reported size: {expected_size} bytes")
+            
+            # 使用 SaveImageSharedMemory 提供的精确参数重建图像
+            numpy_dtype = np.dtype(image_dtype)
             image_array = np.ndarray(image_shape, dtype=numpy_dtype, buffer=result_shm.buf)
             
             # 复制数据（避免共享内存被释放后数据丢失）
@@ -506,12 +525,29 @@ class RemotePhotoSREnhanceNode:
             result_shm.close()
             result_shm.unlink()
             
-            print(f"✓ Successfully loaded image with shape: {result_copy.shape}")
+            print(f"✓ Successfully loaded image with exact shape: {result_copy.shape}")
+            print(f"✓ Image format: {output_format}, dtype: {result_copy.dtype}")
+            
             return result_copy
             
         except Exception as e:
-            print(f"Failed to read from shared memory: {e}")
-            raise RuntimeError(f"Failed to read shared memory output: {e}")
+            print(f"✗ Failed to read from shared memory using SaveImageSharedMemory parameters: {e}")
+            print(f"  - shm_name: {shared_memory_info.get('shm_name', 'N/A')}")
+            print(f"  - shape: {shared_memory_info.get('shape', 'N/A')}")
+            print(f"  - dtype: {shared_memory_info.get('dtype', 'N/A')}")
+            
+            # 尝试清理可能存在的共享内存
+            if shared_memory_info and 'shm_name' in shared_memory_info:
+                try:
+                    cleanup_shm = shared_memory.SharedMemory(name=shared_memory_info['shm_name'])
+                    cleanup_shm.close()
+                    cleanup_shm.unlink()
+                    print(f"✓ Cleaned up orphaned shared memory: {shared_memory_info['shm_name']}")
+                except:
+                    pass  # 忽略清理失败
+            
+            print("Falling back to WebSocket output method...")
+            return self._execute_workflow_websocket_output(workflow, server_address, client_id)
 
     def _execute_workflow_websocket_output(self, workflow, server_address, client_id):
         """执行工作流并使用WebSocket输出"""
@@ -637,19 +673,26 @@ class RemotePhotoSREnhanceNode:
                         break
                     
                     elif message['type'] == 'executed':
-                        # 获取节点执行结果（包括UI输出）
+                        # 获取节点执行结果（包括共享内存信息）
                         data = message['data']
                         if data['prompt_id'] == prompt_id and 'output' in data:
                             node_id = data['node']
                             node_output = data['output']
                             
-                            # 保存节点输出（包括UI数据）
+                            # 保存节点输出
                             if node_id not in output_images:
                                 output_images[node_id] = {}
                             
-                            # 保存UI输出（共享内存元数据在这里）
+                            # 检查共享内存信息 - 参考 remove_bg_api_node.py 的实现
+                            if 'shared_memory_info' in node_output:
+                                output_images[node_id]['shared_memory_info'] = node_output['shared_memory_info']
+                                print(f"✓ Received shared memory info from node {node_id}: {node_output['shared_memory_info']}")
+                            
+                            # 同时保存UI输出（备用）
                             if 'ui' in node_output:
-                                output_images[node_id] = node_output['ui']
+                                if 'ui' not in output_images[node_id]:
+                                    output_images[node_id]['ui'] = {}
+                                output_images[node_id]['ui'].update(node_output['ui'])
                                 print(f"✓ Saved UI output from node {node_id}: {node_output['ui']}")
                 
                 else:
