@@ -56,11 +56,11 @@ class RemotePhotoSREnhanceNode:
                     "tooltip": "上采样模型名称"
                 }),
                 "split_denoise": ("FLOAT", {
-                    "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "default": 0.5000000000000001, "min": 0.0, "max": 1.0, "step": 0.01,
                     "tooltip": "分割去噪强度 (SplitSigmasDenoise)"
                 }),
                 "scheduler_denoise": ("FLOAT", {
-                    "default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "default": 0.30000000000000004, "min": 0.0, "max": 1.0, "step": 0.01,
                     "tooltip": "调度器去噪强度 (BasicScheduler)"
                 }),
                 "guidance": ("FLOAT", {
@@ -84,7 +84,7 @@ class RemotePhotoSREnhanceNode:
                     "tooltip": "VAE 运行设备"
                 }),
                 "random_seed": ("INT", {
-                    "default": -1, "min": -1, "max": 2**31-1,
+                    "default": 710874769520552, "min": -1, "max": 2**63-1,
                     "tooltip": "随机种子，-1为自动"
                 }),
             }
@@ -98,9 +98,9 @@ class RemotePhotoSREnhanceNode:
     def enhance_photo(self, image, enable_upscale, server_addresses, use_shared_memory_output=True, 
                      prompt="high quality, detailed, photograph , hd, 8k , 4k , sharp, highly detailed",
                      upscale_model="2xNomosUni_span_multijpg_ldl.safetensors",
-                     split_denoise=0.5, scheduler_denoise=0.3, guidance=3.5, steps=15, 
+                     split_denoise=0.5000000000000001, scheduler_denoise=0.30000000000000004, guidance=3.5, steps=15, 
                      scheduler="kl_optimal", sampler_name="euler",
-                     vae_device="cuda:1", random_seed=-1):
+                     vae_device="cuda:1", random_seed=710874769520552):
         """
         执行照片超分辨率增强
         """
