@@ -172,23 +172,23 @@ def queue_prompt(prompt, server_address):
         print("Server returned error:", e.read().decode())
         raise
 
-def get_images(ws, prompt, server_address):
+def get_shared_memory_result(ws, prompt, server_address):
     """
-    获取处理后的图像结果
+    获取处理后的共享内存结果
     """
     prompt_id = queue_prompt(prompt, server_address)['prompt_id']
-    output_images = {}
+    shared_memory_info = None
     current_node = ""
     execution_error = None
-    
+
     print(f"Waiting for execution of prompt {prompt_id} on {server_address}...")
-    
+
     while True:
         out = ws.recv()
         if isinstance(out, str):
             message = json.loads(out)
             # print(f"WebSocket message: {message['type']}")  # 调试信息 - 可注释掉
-            
+
             if message['type'] == 'executing':
                 data = message['data']
                 if data['prompt_id'] == prompt_id:
@@ -198,36 +198,35 @@ def get_images(ws, prompt, server_address):
                     else:
                         current_node = data['node']
                         print(f"  Executing node: {current_node}")
-                        
+
+            elif message['type'] == 'executed':
+                data = message['data']
+                if data['prompt_id'] == prompt_id:
+                    node_id = data['node']
+                    if 'shared_memory_info' in data['output']:
+                        shared_memory_info = data['output']['shared_memory_info']
+                        print(f"✓ Received shared memory info from node {node_id}")
+
             elif message['type'] == 'execution_error':
                 execution_error = message['data']
                 if execution_error.get('prompt_id') == prompt_id:
                     print(f"✗ Execution error: {execution_error}")
                     break
-                    
+
             elif message['type'] == 'execution_interrupted':
                 print("✗ Execution interrupted")
                 break
-                
+
             elif message['type'] == 'progress':
                 data = message['data']
                 if data.get('prompt_id') == prompt_id:
                     # print(f"Progress: {data}")  # 调试信息 - 可取消注释查看进度
                     pass
-                    
-        else:
-            print(f"Received binary data from node: {current_node}, size: {len(out)} bytes")
-            if current_node == 'save_image_websocket_node':
-                images_output = output_images.get(current_node, [])
-                images_output.append(out[8:])
-                output_images[current_node] = images_output
-                print(f"✓ Saved image data from {current_node}")
 
     if execution_error:
         raise RuntimeError(f"Workflow execution failed: {execution_error}")
-    
-    print(f"Total output images collected: {len(output_images)}")
-    return output_images
+
+    return shared_memory_info
 
 def load_workflow_from_json(workflow_path):
     """
@@ -398,12 +397,12 @@ def modify_workflow_for_shared_memory_input(workflow, shm_data, enable_upscale=T
         modified_workflow["56"]["inputs"]["sampler_name"] = sampler_name
         print(f"Updated sampler: {sampler_name}")
     
-    # 9. 更新VAE设备配置（节点"103"）
-    if "103" in modified_workflow:
-        modified_workflow["103"]["inputs"]["device"] = vae_device
-        print(f"Updated VAE device: {vae_device}")
-    else:
-        print("Warning: OverrideVAEDevice node (103) not found in workflow")
+    # # 9. 更新VAE设备配置（节点"103"）
+    # if "103" in modified_workflow:
+    #     modified_workflow["103"]["inputs"]["device"] = vae_device
+    #     print(f"Updated VAE device: {vae_device}")
+    # else:
+    #     print("Warning: OverrideVAEDevice node (103) not found in workflow")
     
     # 10. 更新随机种子（节点"63"）
     if random_seed is not None and "63" in modified_workflow:
@@ -418,13 +417,15 @@ def modify_workflow_for_shared_memory_input(workflow, shm_data, enable_upscale=T
         print("Please ensure your ComfyUI has Nunchaku custom nodes installed")
     
     # 12. 添加保存节点以便获取输出（使用VAEDecode的输出，节点"42"）
-    modified_workflow["save_image_websocket_node"] = {
+    modified_workflow["save_image_shared_memory_node"] = {
         "inputs": {
-            "images": ["42", 0]  # 从VAEDecode节点获取输出
+            "images": ["42", 0],  # 从VAEDecode节点获取输出
+            "shm_name": f"output_{uuid.uuid4().hex[:16]}",
+            "convert_rgb_to_bgr": False
         },
-        "class_type": "SaveImageWebsocket",
+        "class_type": "SaveImageSharedMemory",
         "_meta": {
-            "title": "Save Image (WebSocket)"
+            "title": "Save Image (Shared Memory)"
         }
     }
     
@@ -521,41 +522,64 @@ def process_image_photo_sr_enhance_numpy_shared_memory(image_array, enable_upsca
         ws.connect("ws://{}/ws?clientId={}".format(server_address, client_id))
         
         print(f"Executing ComfyUI photo SR enhance workflow on {server_address}...")
-        images = get_images(ws, workflow, server_address)
+        shared_memory_info = get_shared_memory_result(ws, workflow, server_address)
         ws.close()
         execution_time = time.time() - execution_start_time
-        
+
         # 3. 处理输出结果
         output_start_time = time.time()
-        if 'save_image_websocket_node' in images:
-            # 从WebSocket输出获取图像数据
-            output_image_data = images['save_image_websocket_node'][0]
-            
-            # 转换为numpy数组
-            pil_image = Image.open(io.BytesIO(output_image_data))
-            
-            # 确保是RGB格式
-            if pil_image.mode != 'RGB':
-                pil_image = pil_image.convert('RGB')
-            
-            numpy_array = np.array(pil_image)
-            print(f"Output image shape: {numpy_array.shape} (RGB)")
-            
+        if shared_memory_info:
+            # 从共享内存获取图像数据
+            result_info = shared_memory_info[0]
+            shm_name = result_info["shm_name"]
+            shape = result_info["shape"]
+            dtype = result_info["dtype"]
+
+            print(f"✓ Reading result from shared memory: {shm_name}")
+            print(f"  - Shape: {shape}")
+            print(f"  - Size: {result_info.get('size_mb', 'Unknown')} MB")
+
+            # 连接到输出共享内存
+            output_shm = shared_memory.SharedMemory(name=shm_name)
+
+            try:
+                # 重建numpy数组
+                numpy_dtype = getattr(np, dtype)
+                result_array = np.ndarray(shape, dtype=numpy_dtype, buffer=output_shm.buf)
+
+                # 复制数据
+                numpy_array = result_array.copy()
+
+                # 确保是RGB格式
+                if len(numpy_array.shape) == 3 and numpy_array.shape[2] == 3:
+                    print(f"Output image shape: {numpy_array.shape} (RGB)")
+                elif len(numpy_array.shape) == 3 and numpy_array.shape[2] == 4:
+                    # 如果是RGBA，转换为RGB
+                    numpy_array = numpy_array[:, :, :3]
+                    print(f"Output image shape: {numpy_array.shape} (RGBA converted to RGB)")
+                else:
+                    raise ValueError(f"Unexpected image shape: {numpy_array.shape}")
+
+            finally:
+                # 清理输出共享内存
+                output_shm.close()
+                output_shm.unlink()
+
             output_time = time.time() - output_start_time
             total_process_time = time.time() - process_start_time
-            
-            print(f"\n=== Photo SR Enhancement Processing Time Summary (Shared Memory) ===")
+
+            print(f"\n=== Photo SR Enhancement Processing Time Summary (Shared Memory Output) ===")
             print(f"  - Server selected: {server_address}")
             print(f"  - Workflow creation + shared memory setup: {workflow_time:.4f}s")
             print(f"  - ComfyUI execution: {execution_time:.4f}s")
-            print(f"  - Output processing: {output_time:.4f}s")
+            print(f"  - Output processing (shared memory): {output_time:.4f}s")
             print(f"  - Total processing time: {total_process_time:.4f}s")
             print(f"  - Upscale enabled: {enable_upscale}")
             print("=" * 75)
-            
+
             return numpy_array
         else:
-            raise RuntimeError("No output images received from workflow")
+            raise RuntimeError("No shared memory info received from workflow")
     
     except Exception as e:
         print(f"Error processing image with shared memory on {server_address}: {e}")

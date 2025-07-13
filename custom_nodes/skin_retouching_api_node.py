@@ -1,6 +1,6 @@
 """
-Remote Background Removal Node for ComfyUI
-包装 remove_bg_api.py 功能的 ComfyUI 节点，用于调用远程 ComfyUI 服务进行背景移除
+Remote Skin Retouching Node for ComfyUI
+包装 skin_retouching_api.py 功能的 ComfyUI 节点，用于调用远程 ComfyUI 服务进行皮肤美化
 """
 
 import websocket
@@ -27,31 +27,19 @@ comfyui_root = os.path.dirname(current_dir)
 if comfyui_root not in sys.path:
     sys.path.insert(0, comfyui_root)
 
-class RemoteBGRemovalNode:
+class RemoteSkinRetouchingNode:
     """
-    使用远程 ComfyUI 服务进行背景移除的节点
-    支持所有原始 remove_bg_api.py 的功能和参数
-    支持负载均衡、共享内存传输和完整的背景移除参数控制
+    使用远程 ComfyUI 服务进行皮肤美化的节点
+    支持所有原始 skin_retouching_api.py 的功能和参数
     """
-
+    
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "server_addresses": ("STRING", {
-                    "default": "127.0.0.1:8201,127.0.0.1:8202,127.0.0.1:8221",
-                    "tooltip": "ComfyUI服务器地址列表，用逗号分隔，支持负载均衡"
-                }),
-                "model": (["RMBG-2.0", "INSPYRENET", "BEN", "BEN2"], {"default": "RMBG-2.0"}),
-                "sensitivity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "process_res": ("INT", {"default": 1024, "min": 512, "max": 2048, "step": 64}),
-                "mask_blur": ("INT", {"default": 0, "min": 0, "max": 50}),
-                "mask_offset": ("INT", {"default": 0, "min": -20, "max": 20}),
-                "invert_output": ("BOOLEAN", {"default": False}),
-                "refine_foreground": ("BOOLEAN", {"default": False}),
-                "background": (["Alpha", "Color"], {"default": "Alpha"}),
-                "background_color": ("STRING", {"default": "#222222"}),
+                "server_address": ("STRING", {"default": "127.0.0.1:8204"}),
+                "model_path": ("STRING", {"default": "./models/huggingface/cv_unet_skin_retouching_torch"}),
             },
             "optional": {
                 "use_shared_memory_output": ("BOOLEAN", {"default": True, "tooltip": "使用共享内存输出(更快)而不是WebSocket"}),
@@ -65,23 +53,22 @@ class RemoteBGRemovalNode:
     
     def __init__(self):
         self.workflow_template = {
-            "3": {
+            "1": {
                 "inputs": {
-                    "model": "RMBG-2.0",
-                                         "sensitivity": 1.0,
-                    "process_res": 1024,
-                    "mask_blur": 0,
-                    "mask_offset": 0,
-                    "invert_output": False,
-                    "refine_foreground": False,
-                    "background": "Alpha",
-                    "background_color": "#222222",
-                    "image": ["6", 0]
+                    "model_path": "./models/huggingface/cv_unet_skin_retouching_torch"
                 },
-                "class_type": "RMBG",
-                "_meta": {"title": "Remove Background (RMBG)"}
+                "class_type": "SkinRetouchingModelLoader",
+                "_meta": {"title": "SkinRetouchingModelLoader"}
             },
-            "6": {
+            "2": {
+                "inputs": {
+                    "image": ["3", 0],
+                    "skin_retouching_model": ["1", 0]
+                },
+                "class_type": "SkinRetouchingProcessor",
+                "_meta": {"title": "SkinRetouchingProcessor"}
+            },
+            "3": {
                 "inputs": {
                     "shm_name": "",
                     "shape": "",
@@ -93,59 +80,39 @@ class RemoteBGRemovalNode:
             }
         }
     
-    def process(self, image, server_addresses, model="RMBG-2.0", sensitivity=1.0,
-                process_res=1024, mask_blur=0, mask_offset=0, invert_output=False,
-                refine_foreground=False, background="Alpha", background_color="#222222",
+    def process(self, image, server_address, model_path="./models/huggingface/cv_unet_skin_retouching_torch",
                 use_shared_memory_output=True):
-
+        
         start_time = time.time()
-
-        # 解析服务器地址列表
-        server_list = [addr.strip() for addr in server_addresses.split(',') if addr.strip()]
-        if not server_list:
-            raise ValueError("至少需要提供一个服务器地址")
-
-        print(f"Remote Background Removal - Model: {model}")
-        print(f"Server addresses: {server_list}")
-        print(f"Parameters: sensitivity={sensitivity}, process_res={process_res}, background={background}")
-
+        
         # 输入验证
         if image.dim() != 4 or image.shape[0] != 1:
             raise ValueError("Expected image tensor with shape (1, H, W, C)")
-
+        
         # 移除batch维度并转换为numpy
         image_np = image[0].cpu().numpy()
         image_uint8 = (image_np * 255).astype(np.uint8)
-
-        print(f"Input image shape: {image_uint8.shape}")
-
-        # 选择最佳服务器
-        selected_server = self._select_best_server(server_list)
-        if not selected_server:
-            raise RuntimeError("没有可用的 ComfyUI 服务器")
-
+        
         shm_obj = None
         output_shm_obj = None
-
+        
         try:
             # 创建共享内存用于输入
             shm_name, shape, dtype, shm_obj = self.numpy_array_to_shared_memory(image_uint8)
-
+            
             # 创建工作流
             workflow = self.create_workflow(
-                shm_name, shape, dtype, model, sensitivity, process_res,
-                mask_blur, mask_offset, invert_output, refine_foreground,
-                background, background_color, use_shared_memory_output
+                shm_name, shape, dtype, model_path, use_shared_memory_output
             )
-
+            
             # 生成唯一的客户端ID
             client_id = str(uuid.uuid4())
-
+            
             # 执行工作流
             if use_shared_memory_output:
-                result_image = self.execute_workflow_shared_memory(workflow, selected_server, client_id)
+                result_image = self.execute_workflow_shared_memory(workflow, server_address, client_id)
             else:
-                result_image = self.execute_workflow_websocket(workflow, selected_server, client_id)
+                result_image = self.execute_workflow_websocket(workflow, server_address, client_id)
             
             # 转换回ComfyUI格式
             if result_image.dtype != np.float32:
@@ -155,14 +122,12 @@ class RemoteBGRemovalNode:
             
             total_time = time.time() - start_time
             output_mode = "Shared Memory" if use_shared_memory_output else "WebSocket"
-            print(f"✓ Remote background removal completed in {total_time:.3f}s using {output_mode}")
-            print(f"  Server used: {selected_server}")
-            print(f"  Output shape: {result_tensor.shape}")
-
+            print(f"✓ Remote skin retouching completed in {total_time:.3f}s using {output_mode}")
+            
             return (result_tensor,)
-
+            
         except Exception as e:
-            print(f"✗ Remote background removal failed on {selected_server}: {e}")
+            print(f"Error in remote skin retouching: {e}")
             raise
         finally:
             # 清理共享内存
@@ -171,38 +136,26 @@ class RemoteBGRemovalNode:
             if output_shm_obj:
                 self.cleanup_shared_memory(shm_object=output_shm_obj)
     
-    def create_workflow(self, shm_name, shape, dtype, model, sensitivity, process_res,
-                       mask_blur, mask_offset, invert_output, refine_foreground,
-                       background, background_color, use_shared_memory_output):
+    def create_workflow(self, shm_name, shape, dtype, model_path, use_shared_memory_output):
         """创建工作流配置"""
         workflow = copy.deepcopy(self.workflow_template)
         
         # 配置输入节点
-        workflow["6"]["inputs"].update({
+        workflow["3"]["inputs"].update({
             "shm_name": shm_name,
             "shape": json.dumps(shape),
             "dtype": dtype,
             "convert_bgr_to_rgb": False
         })
         
-        # 配置RMBG节点
-        workflow["3"]["inputs"].update({
-            "model": model,
-            "sensitivity": sensitivity,
-            "process_res": process_res,
-            "mask_blur": mask_blur,
-            "mask_offset": mask_offset,
-            "invert_output": invert_output,
-            "refine_foreground": refine_foreground,
-            "background": background,
-            "background_color": background_color
-        })
+        # 配置SkinRetouchingModelLoader节点
+        workflow["1"]["inputs"]["model_path"] = model_path
         
         # 配置输出节点
         if use_shared_memory_output:
             workflow["save_node"] = {
                 "inputs": {
-                    "images": ["3", 0],
+                    "images": ["2", 0],
                     "shm_name": f"output_{uuid.uuid4().hex[:16]}",
                     "convert_rgb_to_bgr": False
                 },
@@ -212,7 +165,7 @@ class RemoteBGRemovalNode:
         else:
             workflow["save_node"] = {
                 "inputs": {
-                    "images": ["3", 0]
+                    "images": ["2", 0]
                 },
                 "class_type": "SaveImageWebsocket",
                 "_meta": {"title": "Save Image (WebSocket)"}
@@ -280,13 +233,11 @@ class RemoteBGRemovalNode:
                 output_image_data = images['save_node'][0]
                 pil_image = Image.open(io.BytesIO(output_image_data))
                 
-                if pil_image.mode == 'RGBA':
-                    result_array = np.array(pil_image)
-                else:
-                    if pil_image.mode != 'RGB':
-                        pil_image = pil_image.convert('RGB')
-                    result_array = np.array(pil_image)
+                # 确保是RGB格式
+                if pil_image.mode != 'RGB':
+                    pil_image = pil_image.convert('RGB')
                 
+                result_array = np.array(pil_image)
                 return result_array
             else:
                 raise RuntimeError("No output images received from workflow")
@@ -346,7 +297,7 @@ class RemoteBGRemovalNode:
         try:
             response = urllib.request.urlopen(req)
             result = json.loads(response.read())
-            print("got prompt")
+            print("✓ Prompt queued successfully")
             return result
         except urllib.error.HTTPError as e:
             print("Server returned error:", e.read().decode())
@@ -426,87 +377,11 @@ class RemoteBGRemovalNode:
         except Exception as e:
             print(f"Warning: Failed to cleanup shared memory: {e}")
 
-    def _select_best_server(self, server_list):
-        """选择最佳的ComfyUI服务器"""
-        print("=== Checking ComfyUI servers status (8201, 8202, 8221) ===")
-        available_servers = []
-
-        for server in server_list:
-            status = self._check_server_status(server)
-            if status['available']:
-                available_servers.append(status)
-                print(f"✓ {server}: load={status['total_load']}, vram_free={status['vram_free']/(1024**3):.1f}GB")
-            else:
-                print(f"✗ {server}: {status.get('error', 'unavailable')}")
-
-        if not available_servers:
-            print("No available ComfyUI servers found!")
-            return None
-
-        # 选择负载最低的服务器，如果负载相同则选择VRAM使用率最低的
-        best_server = min(available_servers, key=lambda x: (x['total_load'], x['vram_usage_ratio']))
-
-        print(f"Selected server: {best_server['server_address']} (load={best_server['total_load']})")
-        print("=" * 50)
-
-        return best_server['server_address']
-
-    def _check_server_status(self, server_address):
-        """检查ComfyUI服务器状态"""
-        try:
-            # 检查队列状态
-            queue_url = f"http://{server_address}/queue"
-            queue_req = urllib.request.Request(queue_url)
-            queue_req.add_header('Content-Type', 'application/json')
-
-            with urllib.request.urlopen(queue_req, timeout=3) as response:
-                queue_data = json.loads(response.read())
-
-            # 检查系统状态
-            stats_url = f"http://{server_address}/system_stats"
-            stats_req = urllib.request.Request(stats_url)
-
-            with urllib.request.urlopen(stats_req, timeout=3) as response:
-                system_data = json.loads(response.read())
-
-            # 计算服务器负载
-            queue_running = len(queue_data.get('queue_running', []))
-            queue_pending = len(queue_data.get('queue_pending', []))
-            total_load = queue_running + queue_pending
-
-            # 获取VRAM使用情况
-            vram_free = 0
-            vram_total = 0
-            if 'devices' in system_data and len(system_data['devices']) > 0:
-                device = system_data['devices'][0]
-                vram_free = device.get('vram_free', 0)
-                vram_total = device.get('vram_total', 1)
-
-            vram_usage_ratio = 1 - (vram_free / vram_total) if vram_total > 0 else 1
-
-            return {
-                'server_address': server_address,
-                'queue_running': queue_running,
-                'queue_pending': queue_pending,
-                'total_load': total_load,
-                'vram_free': vram_free,
-                'vram_total': vram_total,
-                'vram_usage_ratio': vram_usage_ratio,
-                'available': True
-            }
-
-        except Exception as e:
-            return {
-                'server_address': server_address,
-                'available': False,
-                'error': str(e)
-            }
-
 # 节点注册
 NODE_CLASS_MAPPINGS = {
-    "RemoteBGRemovalNode": RemoteBGRemovalNode,
+    "RemoteSkinRetouchingNode": RemoteSkinRetouchingNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "RemoteBGRemovalNode": "Remote Background Removal",
+    "RemoteSkinRetouchingNode": "Remote Skin Retouching",
 } 
