@@ -7,7 +7,6 @@ import os
 import sys
 import torch
 import numpy as np
-import tempfile
 import subprocess
 import importlib.util
 from PIL import Image
@@ -60,16 +59,16 @@ def is_installed(package, package_overwrite=None, auto_install=True):
 
     return is_has
 
-# Try to import OpenAI client
-openai_client = None
+# Import Volcano Engine ARK SDK
+ark_client = None
 try:
-    if is_installed('openai'):
-        from openai import OpenAI
-        print("OpenAI client imported successfully")
+    if is_installed('volcengine-python-sdk[ark]', 'volcengine-python-sdk[ark]'):
+        from volcenginesdkarkruntime import Ark
+        print("Volcano Engine ARK SDK imported successfully")
     else:
-        print("Failed to install openai package")
+        print("Failed to install volcengine-python-sdk[ark] package")
 except Exception as e:
-    print(f"Failed to import OpenAI client: {e}")
+    print(f"Failed to import Volcano Engine ARK SDK: {e}")
 
 def tensor_to_pil(tensor):
     """Convert tensor to PIL Image"""
@@ -106,6 +105,10 @@ def pil_to_base64(pil_image):
     img_str = base64.b64encode(buffer.getvalue()).decode()
     return img_str
 
+def is_url(string):
+    """Check if string is a valid URL"""
+    return isinstance(string, str) and (string.startswith('http://') or string.startswith('https://') or string.startswith('data:image/'))
+
 class VolcanoDoubaoSeedEditNode:
     """ComfyUI Node for Volcano Engine Doubao SeedEdit 3.0 I2I model"""
     
@@ -119,10 +122,18 @@ class VolcanoDoubaoSeedEditNode:
                     "tooltip": "Text prompt describing the desired changes to the image"
                 }),
                 "image": ("IMAGE", {
-                    "tooltip": "Input image to be edited"
+                    "tooltip": "Input image to be edited (tensor format)"
                 }),
             },
             "optional": {
+                "model": ("STRING", {
+                    "default": "doubao-seededit-3-0-i2i-250628",
+                    "tooltip": "Model name for Volcano Engine Doubao SeedEdit"
+                }),
+                "image_url": ("STRING", {
+                    "default": "",
+                    "tooltip": "Image URL (if provided, takes priority over tensor image input)"
+                }),
                 "size": (["adaptive", "1024x1024", "1024x768", "768x1024", "1152x896", "896x1152"], {
                     "default": "adaptive",
                     "tooltip": "Output image size"
@@ -156,17 +167,18 @@ class VolcanoDoubaoSeedEditNode:
     FUNCTION = "generate_image"
     CATEGORY = "🌋 Volcano Engine"
     
-    def generate_image(self, prompt, image, size="adaptive", seed=-1, guidance_scale=5.5, watermark=True, ark_api_key=""):
+    def generate_image(self, prompt, image, model="doubao-seededit-3-0-i2i-250628", image_url="", size="adaptive", seed=-1, guidance_scale=5.5, watermark=True, ark_api_key=""):
         """Generate edited image using Volcano Engine Doubao SeedEdit 3.0 I2I model"""
-        
-        # Note: We use direct HTTP requests instead of OpenAI client to support custom parameters
         
         # Validate inputs
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
         
-        if image is None:
-            raise ValueError("Input image is required")
+        if not image_url and image is None:
+            raise ValueError("Either image_url or image tensor is required")
+        
+        if not model or not model.strip():
+            raise ValueError("Model name cannot be empty")
         
         # Set API key
         api_key = ark_api_key.strip() if ark_api_key else os.environ.get("ARK_API_KEY", "").strip()
@@ -176,43 +188,38 @@ class VolcanoDoubaoSeedEditNode:
             raise ValueError(error_msg)
         
         try:
-            # Convert tensor to PIL image
-            print(f"Starting Volcano Engine Doubao SeedEdit 3.0 I2I generation...")
+            print(f"Starting Volcano Engine Doubao SeedEdit generation...")
+            print(f"Model: {model}")
             print(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
             print(f"Size: {size}, Seed: {seed}, Guidance Scale: {guidance_scale}, Watermark: {watermark}")
             
-            pil_image = tensor_to_pil(image)
-            if pil_image is None:
-                raise ValueError("Failed to convert tensor to PIL image")
+            # Initialize Ark client
+            client = Ark(
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+                api_key=api_key,
+            )
             
-            # Prepare for direct API call to Volcano Engine
-            
-            # Convert image to base64 for upload (or use image URL if available)
-            # For now, we'll save to temporary file and convert to base64
-            temp_file_path = None
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    pil_image.save(temp_file, format="PNG")
-                    temp_file_path = temp_file.name
+            # Determine image input format
+            image_input = None
+            if image_url and image_url.strip():
+                # Use provided URL
+                image_input = image_url.strip()
+                print(f"Using image URL: {image_input[:100]}{'...' if len(image_input) > 100 else ''}")
+            else:
+                # Convert tensor to base64 data URL
+                pil_image = tensor_to_pil(image)
+                if pil_image is None:
+                    raise ValueError("Failed to convert tensor to PIL image")
                 
-                # Convert to base64 string
                 img_base64 = pil_to_base64(pil_image)
-                
-                # Clean up temp file
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                    temp_file_path = None
-                
-            except Exception as e:
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                raise RuntimeError(f"Failed to process input image: {str(e)}")
+                image_input = f"data:image/png;base64,{img_base64}"
+                print("Using tensor image converted to base64")
             
-            # Prepare arguments for the API call
-            request_args = {
-                "model": "doubao-seededit-3-0-i2i-250628",
+            # Prepare API call arguments
+            api_args = {
+                "model": model,
                 "prompt": prompt,
-                "response_format": "url",
+                "image": image_input,
                 "size": size,
                 "guidance_scale": guidance_scale,
                 "watermark": watermark,
@@ -220,64 +227,22 @@ class VolcanoDoubaoSeedEditNode:
             
             # Add seed if specified (not -1)
             if seed >= 0:
-                request_args["seed"] = seed
+                api_args["seed"] = seed
                 print(f"Using seed: {seed}")
             
-            # Add image as base64 data URL
-            request_args["image"] = f"data:image/png;base64,{img_base64}"
+            print(f"Calling Volcano Engine API with model: {model}")
             
-            print(f"Calling Volcano Engine Doubao SeedEdit API...")
-            
-            # Make the API call using direct HTTP request
-            # The OpenAI client doesn't support custom parameters like guidance_scale
-            # so we make a direct request to the Volcano Engine API endpoint
-            try:
-                api_url = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                response = requests.post(api_url, json=request_args, headers=headers, timeout=120)
-                response.raise_for_status()
-                
-                # Parse the JSON response
-                response_data = response.json()
-                
-            except requests.exceptions.RequestException as api_error:
-                error_msg = f"Volcano Engine API call failed: {str(api_error)}"
-                if hasattr(api_error, 'response') and api_error.response is not None:
-                    status_code = api_error.response.status_code
-                    if status_code == 401:
-                        error_msg += "\nCheck your ARK API key is valid and has sufficient credits."
-                    elif status_code == 400:
-                        error_msg += "\nCheck your prompt and image are valid."
-                        try:
-                            error_details = api_error.response.json()
-                            if 'error' in error_details:
-                                error_msg += f"\nAPI Error: {error_details['error']}"
-                        except:
-                            pass
-                    elif status_code == 404:
-                        error_msg += f"\nModel 'doubao-seededit-3-0-i2i-250628' might not be available. Check your model access permissions."
-                print(error_msg)
-                raise RuntimeError(error_msg) from api_error
-            except Exception as api_error:
-                error_msg = f"Volcano Engine API call failed: {str(api_error)}"
-                print(error_msg)
-                raise RuntimeError(error_msg) from api_error
+            # Make the API call using official SDK
+            response = client.images.generate(**api_args)
             
             print("API call successful, processing result...")
             
-            # Validate result structure
-            if not response_data:
-                raise RuntimeError("Empty result returned from Volcano Engine API")
-            
-            if "data" not in response_data or len(response_data["data"]) == 0:
+            # Validate response
+            if not response or not hasattr(response, 'data') or len(response.data) == 0:
                 raise RuntimeError("No images returned from API")
             
             # Extract image URL from result
-            result_image_url = response_data["data"][0]["url"]
+            result_image_url = response.data[0].url
             print(f"Generated image URL: {result_image_url}")
             
             # Download the generated image
@@ -288,39 +253,37 @@ class VolcanoDoubaoSeedEditNode:
                 if len(download_response.content) == 0:
                     raise RuntimeError("Downloaded image is empty")
                 
-            except Exception as download_error:
+                # Convert downloaded image to PIL then tensor
+                generated_image = Image.open(io.BytesIO(download_response.content))
+                result_tensor = pil_to_tensor(generated_image)
+                
+                print("Image editing completed successfully")
+                return (result_tensor,)
+                
+            except requests.exceptions.RequestException as download_error:
                 error_msg = f"Failed to download generated image: {str(download_error)}"
                 print(error_msg)
                 raise RuntimeError(error_msg) from download_error
-            
-            # Convert downloaded image to PIL then tensor
-            temp_file_path = None
-            try:
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    temp_file.write(download_response.content)
-                    temp_file_path = temp_file.name
-                
-                generated_image = Image.open(temp_file_path)
-                result_tensor = pil_to_tensor(generated_image)
-                
-                # Clean up
-                os.unlink(temp_file_path)
-                temp_file_path = None
-                
             except Exception as conversion_error:
                 error_msg = f"Failed to process generated image: {str(conversion_error)}"
                 print(error_msg)
-                
-                # Clean up on error
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                
                 raise RuntimeError(error_msg) from conversion_error
-            
-            print("Image editing completed successfully")
-            return (result_tensor,)
                 
         except Exception as e:
+            # Handle SDK-specific errors
+            if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+                status_code = e.response.status_code
+                if status_code == 401:
+                    error_msg = f"Authentication failed: {str(e)}\nCheck your ARK API key is valid and has sufficient credits."
+                elif status_code == 400:
+                    error_msg = f"Bad request: {str(e)}\nCheck your prompt, image, and parameters are valid."
+                elif status_code == 404:
+                    error_msg = f"Model not found: {str(e)}\nModel '{model}' might not be available. Check your model access permissions."
+                else:
+                    error_msg = f"API error ({status_code}): {str(e)}"
+                print(error_msg)
+                raise RuntimeError(error_msg) from e
+            
             # Re-raise known errors without wrapping
             if isinstance(e, (ValueError, RuntimeError)):
                 raise
