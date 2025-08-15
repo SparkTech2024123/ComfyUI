@@ -621,7 +621,7 @@ class RemoteKontextOmniStylesNode:
                     
                     if message['type'] == 'executing':
                         data = message['data']
-                        if data['prompt_id'] == prompt_id:
+                        if data.get('prompt_id') == prompt_id:
                             if data['node'] is None:
                                 print("✓ Execution completed")
                                 break
@@ -643,7 +643,7 @@ class RemoteKontextOmniStylesNode:
                     elif message['type'] == 'executed':
                         # Get node execution result (including shared memory info)
                         data = message['data']
-                        if data['prompt_id'] == prompt_id and 'output' in data:
+                        if data.get('prompt_id') == prompt_id and 'output' in data:
                             node_id = data['node']
                             node_output = data['output']
                             
