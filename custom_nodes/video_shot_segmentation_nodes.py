@@ -469,6 +469,14 @@ class VideoShotDetector:
                 "segmentation_model": ("MODEL_SEGMENTATION", {
                     "tooltip": "Loaded segmentation model from VideoSegmentationModelLoader"
                 }),
+                "save_json_to_file": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Save shot detection results to JSON file"
+                }),
+                "output_json_path": ("STRING", {
+                    "default": "",
+                    "tooltip": "Output JSON file path (optional, auto-generated if empty)"
+                }),
             },
         }
 
@@ -477,7 +485,7 @@ class VideoShotDetector:
     FUNCTION = "detect_shots"
     CATEGORY = "video/segmentation"
     
-    def detect_shots(self, video_path: str, segmentation_model: Dict) -> Tuple[str]:
+    def detect_shots(self, video_path: str, segmentation_model: Dict, save_json_to_file: bool, output_json_path: str) -> Tuple[str]:
         """Detect shots in video and return JSON metadata"""
         if not video_path.strip():
             raise ValueError("Video path cannot be empty")
@@ -507,6 +515,37 @@ class VideoShotDetector:
                 "shot_num": result.get("shot_num", 0),
                 "shot_meta_list": result.get("shot_meta_list", [])
             }
+            
+            # Save JSON to file if requested
+            if save_json_to_file:
+                try:
+                    # Generate filename if not provided
+                    if not output_json_path.strip():
+                        # Handle URL vs local file path differently
+                        if is_url(video_path):
+                            # For URLs, extract filename from URL and save in current directory
+                            video_basename = os.path.splitext(os.path.basename(video_path))[0]
+                            output_json_path = f"{video_basename}_shot_detection.json"
+                        else:
+                            # For local files, save in the same directory as the video
+                            video_dir = os.path.dirname(os.path.abspath(video_path))
+                            video_basename = os.path.splitext(os.path.basename(video_path))[0]
+                            output_json_path = os.path.join(video_dir, f"{video_basename}_shot_detection.json")
+
+                    # Ensure directory exists
+                    json_dir = os.path.dirname(output_json_path)
+                    if json_dir and not os.path.exists(json_dir):
+                        os.makedirs(json_dir, exist_ok=True)
+                    
+                    # Save JSON file
+                    with open(output_json_path, 'w', encoding='utf-8') as f:
+                        json.dump(shot_results, f, indent=2, ensure_ascii=False)
+                    
+                    print(f"💾 Shot detection results saved to: {output_json_path}")
+                    
+                except Exception as e:
+                    print(f"⚠️ Warning: Failed to save JSON file: {e}")
+                    # Continue execution - don't fail the whole operation
             
             # Return as JSON string
             return (json.dumps(shot_results, indent=2, ensure_ascii=False),)
@@ -545,7 +584,11 @@ class VideoShotSplitter:
                 }),
                 "enable_shot_splitting": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Enable shot video splitting (always extracts frames)"
+                    "tooltip": "Enable shot video splitting"
+                }),
+                "enable_frame_extraction": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Enable extraction of first and last frame images for each shot"
                 }),
                 "max_workers": ("INT", {
                     "default": 0,
@@ -567,7 +610,7 @@ class VideoShotSplitter:
     CATEGORY = "video/segmentation"
     
     def split_video(self, video_path: str, shot_json: str, output_directory: str,
-                   enable_shot_splitting: bool, max_workers: int, force_cpu: bool) -> Tuple[str, str]:
+                   enable_shot_splitting: bool, enable_frame_extraction: bool, max_workers: int, force_cpu: bool) -> Tuple[str, str]:
         """Split video into shots and extract frames based on JSON metadata"""
         
         if not video_path.strip():
@@ -652,15 +695,18 @@ class VideoShotSplitter:
                         'process_time': 0
                     })
 
-            # Extract frames for each shot
-            print("🖼️ Extracting frames...")
-            for segment_info in shot_segments:
-                frame_paths = extract_shot_frames_ffmpeg(
-                    actual_video_path,  # Use original video path
-                    segment_info,
-                    output_directory
-                )
-                segment_info.update(frame_paths)
+            # Extract frames for each shot (if enabled)
+            if enable_frame_extraction:
+                print("🖼️ Extracting frames...")
+                for segment_info in shot_segments:
+                    frame_paths = extract_shot_frames_ffmpeg(
+                        actual_video_path,  # Use original video path
+                        segment_info,
+                        output_directory
+                    )
+                    segment_info.update(frame_paths)
+            else:
+                print("⏭️ Frame extraction disabled")
 
             # Create processing results
             processing_results = {
@@ -675,6 +721,7 @@ class VideoShotSplitter:
                     'total_shots': len(shot_segments),
                     'successful_shots': len([s for s in shot_segments if s.get('video_file')]),
                     'shot_splitting_enabled': enable_shot_splitting,
+                    'frame_extraction_enabled': enable_frame_extraction,
                     'force_cpu': force_cpu,
                     'max_workers': actual_max_workers or 'auto'
                 }
@@ -687,14 +734,20 @@ class VideoShotSplitter:
             with open(results_path, 'w', encoding='utf-8') as f:
                 json.dump(processing_results, f, indent=2, ensure_ascii=False)
             
-            if enable_shot_splitting:
-                print("✅ Video splitting complete!")
+            # Status message based on what was enabled
+            if enable_shot_splitting and enable_frame_extraction:
+                print("✅ Video splitting and frame extraction complete!")
+            elif enable_shot_splitting:
+                print("✅ Video splitting complete (frame extraction disabled)!")
+            elif enable_frame_extraction:
+                print("✅ Frame extraction complete (video splitting disabled)!")
             else:
-                print("✅ Frame extraction complete!")
+                print("✅ Processing complete (only metadata generated)!")
             print(f"📊 Summary:")
             print(f"  - Original video: {video_path}")
             print(f"  - Processed shots: {len(shot_segments)}")
-            print(f"  - Shot splitting: {'Enabled' if enable_shot_splitting else 'Disabled (frames only)'}")
+            print(f"  - Shot splitting: {'Enabled' if enable_shot_splitting else 'Disabled'}")
+            print(f"  - Frame extraction: {'Enabled' if enable_frame_extraction else 'Disabled'}")
             print(f"  - Output directory: {output_directory}")
             
             return (output_directory, json.dumps(processing_results, indent=2, ensure_ascii=False))
@@ -709,12 +762,70 @@ class VideoShotSplitter:
                 print("🗑️ Temporary video file cleaned up")
 
 
+class VideoShotJSONLoader:
+    """ComfyUI Node for loading shot detection JSON files"""
+    
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "json_file_path": ("STRING", {
+                    "default": "",
+                    "tooltip": "Path to JSON file containing shot detection results"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("shot_json",)
+    FUNCTION = "load_shot_json"
+    CATEGORY = "video/segmentation"
+    
+    def load_shot_json(self, json_file_path: str) -> Tuple[str]:
+        """Load shot detection JSON file and return as string"""
+        if not json_file_path.strip():
+            raise ValueError("JSON file path cannot be empty")
+            
+        if not os.path.exists(json_file_path):
+            raise FileNotFoundError(f"JSON file not found: {json_file_path}")
+        
+        try:
+            # Load JSON file
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                shot_data = json.load(f)
+            
+            # Validate JSON structure
+            if not isinstance(shot_data, dict):
+                raise ValueError("JSON file must contain a dictionary object")
+                
+            if "shot_meta_list" not in shot_data:
+                raise ValueError("JSON file must contain 'shot_meta_list' key")
+                
+            if not isinstance(shot_data["shot_meta_list"], list):
+                raise ValueError("'shot_meta_list' must be a list")
+            
+            print(f"📂 Loaded shot detection JSON: {json_file_path}")
+            print(f"   - Found {len(shot_data['shot_meta_list'])} shots")
+            
+            # Return as JSON string (same format as VideoShotDetector)
+            return (json.dumps(shot_data, indent=2, ensure_ascii=False),)
+            
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON format in file {json_file_path}: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to load JSON file: {e}")
+
+
 # ===================== COMFYUI NODE REGISTRATION =====================
 
 # Node class mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "VideoSegmentationModelLoader": VideoSegmentationModelLoader,
     "VideoShotDetector": VideoShotDetector,
+    "VideoShotJSONLoader": VideoShotJSONLoader,
     "VideoShotSplitter": VideoShotSplitter
 }
 
@@ -722,5 +833,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoSegmentationModelLoader": "Video Segmentation Model Loader",
     "VideoShotDetector": "Video Shot Detector", 
+    "VideoShotJSONLoader": "Video Shot JSON Loader",
     "VideoShotSplitter": "Video Shot Splitter"
 }
