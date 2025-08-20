@@ -54,8 +54,10 @@ COMFYUI_INSTANCES = [
     (3, 8266),
 ]
 
-# Working directory for ComfyUI
-COMFYUI_DIR = "/data/projs/WebServer/distributed-server-node/submodules/VisualForge/ComfyUI"
+# Working directory for ComfyUI - calculate dynamically
+# Since we're now in script_examples/image_server_manager/, we need to go up two levels to reach ComfyUI root
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+COMFYUI_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
 def check_conda_environment():
     """Check if we're running in the correct conda environment."""

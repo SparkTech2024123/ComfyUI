@@ -12,6 +12,7 @@ Based on the cv_resnet50-bert_video-scene-segmentation_movienet model.
 import os
 import sys
 import json
+import math
 import urllib.request
 import subprocess
 import time
@@ -57,6 +58,81 @@ def timestamp_to_seconds(timestamp_str: str) -> float:
     except (ValueError, IndexError):
         print(f"⚠️ Warning: Cannot parse timestamp {timestamp_str}")
         return 0.0
+
+
+def seconds_to_timestamp(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS.mmm timestamp format"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+
+
+def split_large_shots(shot_meta_list: List[Dict], max_frames: int = 320) -> List[Dict]:
+    """Split shots with >max_frames into smaller sub-segments with overlapping frames for smooth style transfer"""
+    new_shot_meta_list = []
+    
+    for shot in shot_meta_list:
+        start_frame = int(shot['frame'][0])
+        end_frame = int(shot['frame'][1])
+        frame_count = end_frame - start_frame + 1
+        
+        if frame_count <= max_frames:
+            # Keep as-is for segments ≤320 frames (no overlaps needed)
+            new_shot_meta_list.append(shot)
+        else:
+            # Split into sub-segments with overlapping frames for smooth transitions
+            print(f"📐 Splitting shot with {frame_count} frames (>{max_frames}) into sub-segments with overlapping frames")
+            num_segments = math.ceil(frame_count / max_frames)
+            unique_frames_per_segment = frame_count // num_segments
+            extra_frames = frame_count % num_segments
+            
+            start_timestamp = shot['timestamps'][0]
+            end_timestamp = shot['timestamps'][1]
+            start_seconds = timestamp_to_seconds(start_timestamp)
+            end_seconds = timestamp_to_seconds(end_timestamp)
+            total_duration = end_seconds - start_seconds
+            
+            current_unique_start = start_frame
+            
+            for i in range(num_segments):
+                # Calculate unique frames for this segment
+                segment_unique_frames = unique_frames_per_segment + (1 if i < extra_frames else 0)
+                
+                if i == 0:
+                    # First segment - no overlap needed
+                    segment_start_frame = current_unique_start
+                    segment_end_frame = current_unique_start + segment_unique_frames - 1
+                else:
+                    # Subsequent segments - start with overlap from previous segment's end frame
+                    segment_start_frame = current_unique_start - 1  # Overlap frame
+                    segment_end_frame = current_unique_start + segment_unique_frames - 1
+                
+                # Calculate proportional timestamps based on actual frame positions
+                progress_start = (segment_start_frame - start_frame) / frame_count
+                progress_end = (segment_end_frame - start_frame) / frame_count
+                
+                segment_start_seconds = start_seconds + (progress_start * total_duration)
+                segment_end_seconds = start_seconds + (progress_end * total_duration)
+                
+                # Convert to timestamp format
+                segment_start_timestamp = seconds_to_timestamp(segment_start_seconds)
+                segment_end_timestamp = seconds_to_timestamp(segment_end_seconds)
+                
+                # Create sub-segment
+                total_segment_frames = segment_end_frame - segment_start_frame + 1
+                new_shot_meta_list.append({
+                    'frame': [str(segment_start_frame), str(segment_end_frame)],
+                    'timestamps': [segment_start_timestamp, segment_end_timestamp]
+                })
+                
+                overlap_info = f" (includes overlap frame {segment_start_frame})" if i > 0 else ""
+                print(f"  ✂️  Sub-segment {i+1}/{num_segments}: frames {segment_start_frame}-{segment_end_frame} ({total_segment_frames} frames{overlap_info})")
+                
+                # Move to next segment's unique starting point
+                current_unique_start += segment_unique_frames
+    
+    return new_shot_meta_list
 
 
 def create_output_dirs(base_dir: str = 'output') -> None:
@@ -285,91 +361,108 @@ def segment_video_by_shots(video_path: str, shot_meta_list: List[Dict],
     return sorted(shot_results, key=lambda x: x['id'])
 
 
-def extract_shot_frames_ffmpeg(original_video_path: str, shot_info: Dict, 
+def extract_shot_frames_ffmpeg(original_video_path: str, shot_info: Dict,
                               output_dir: str = 'output') -> Dict[str, str]:
-    """Extract shot frames using FFmpeg directly from original video"""
+    """Extract shot frames using FFmpeg with precise frame-based extraction for frame sharing"""
     if not os.path.exists(original_video_path):
         print(f"❌ Original video not found: {original_video_path}")
         return {}
-    
+
     if not check_ffmpeg_available():
         print("⚠️ FFmpeg unavailable, cannot extract frames")
         return {}
-    
+
     shot_id = shot_info['id']
     frames_dir = f"{output_dir}/frames"
     os.makedirs(frames_dir, exist_ok=True)
-    
+
     first_frame_path = f"{frames_dir}/shot_{shot_id}_first.jpg"
     last_frame_path = f"{frames_dir}/shot_{shot_id}_last.jpg"
-    
+
     frame_paths = {}
-    
-    # Get timestamp info
-    start_seconds = shot_info.get('start_seconds')
-    end_seconds = shot_info.get('end_seconds')
-    
-    # If no precise seconds, calculate from timestamps
-    if start_seconds is None or end_seconds is None:
-        start_time = shot_info['timestamps'][0]
-        end_time = shot_info['timestamps'][1]
-        start_seconds = timestamp_to_seconds(start_time)
-        end_seconds = timestamp_to_seconds(end_time)
-    
-    # Adjust timestamps to avoid boundary issues
-    first_time = start_seconds + 0.001
-    last_time = max(end_seconds - 0.1, start_seconds + 0.001)
-    
-    print(f"📸 Extract shot {shot_id} frames: first@{first_time:.3f}s, last@{last_time:.3f}s")
-    
-    # Extract first frame
+
+    # Get frame range from shot_info
+    frame_range = shot_info.get('frame_range', [])
+    if not frame_range or len(frame_range) < 2:
+        print(f"❌ Invalid frame range for shot {shot_id}: {frame_range}")
+        return {}
+
     try:
+        start_frame = int(frame_range[0])
+        end_frame = int(frame_range[1])
+    except (ValueError, TypeError):
+        print(f"❌ Cannot parse frame numbers for shot {shot_id}: {frame_range}")
+        return {}
+
+    # Validate frame range
+    if start_frame < 0 or end_frame < start_frame:
+        print(f"❌ Invalid frame range for shot {shot_id}: {start_frame}-{end_frame}")
+        return {}
+
+    print(f"📸 Extract shot {shot_id} frames: first=frame_{start_frame}, last=frame_{end_frame}")
+
+    # Get video info for FPS calculation
+    video_info = get_video_info_ffprobe(original_video_path)
+    if not video_info or video_info.get('fps', 0) <= 0:
+        print(f"❌ Cannot get video FPS information")
+        return {}
+
+    fps = video_info['fps']
+
+    # Extract first frame using precise timestamp calculation
+    try:
+        # Convert frame number to timestamp (0-based indexing for FFmpeg)
+        frame_timestamp = start_frame / fps
+
         cmd_first = [
             'ffmpeg', '-y',
-            '-ss', f"{first_time:.3f}",
+            '-ss', f'{frame_timestamp:.6f}',
             '-i', original_video_path,
             '-vframes', '1',
             '-q:v', '2',
             '-f', 'image2',
             first_frame_path
         ]
-        
+
         result = subprocess.run(cmd_first, capture_output=True, text=True, timeout=30)
-        
+
         if result.returncode == 0 and os.path.exists(first_frame_path):
             frame_paths['first_frame'] = first_frame_path
-            print(f"✅ First frame saved: {first_frame_path}")
+            print(f"✅ First frame saved: {first_frame_path} (frame {start_frame}, t={frame_timestamp:.6f}s)")
         else:
             print(f"❌ First frame extraction failed: {result.stderr}")
-            
+
     except Exception as e:
         print(f"❌ First frame extraction error: {e}")
-    
-    # Extract last frame (if sufficient time)
-    if last_time > first_time + 0.01:  # At least 0.01s difference
+
+    # Extract last frame (if different from first frame)
+    if end_frame > start_frame:
         try:
+            # Convert frame number to timestamp (0-based indexing for FFmpeg)
+            frame_timestamp = end_frame / fps
+
             cmd_last = [
                 'ffmpeg', '-y',
-                '-ss', f"{last_time:.3f}",
+                '-ss', f'{frame_timestamp:.6f}',
                 '-i', original_video_path,
                 '-vframes', '1',
                 '-q:v', '2',
                 '-f', 'image2',
                 last_frame_path
             ]
-            
+
             result = subprocess.run(cmd_last, capture_output=True, text=True, timeout=30)
-            
+
             if result.returncode == 0 and os.path.exists(last_frame_path):
                 frame_paths['last_frame'] = last_frame_path
-                print(f"✅ Last frame saved: {last_frame_path}")
+                print(f"✅ Last frame saved: {last_frame_path} (frame {end_frame}, t={frame_timestamp:.6f}s)")
             else:
                 print(f"❌ Last frame extraction failed: {result.stderr}")
                 # Use first frame as last frame if failed
                 if 'first_frame' in frame_paths:
                     frame_paths['last_frame'] = first_frame_path
                     print(f"⚠️ Using first frame as last frame")
-                
+
         except Exception as e:
             print(f"❌ Last frame extraction error: {e}")
             # Use first frame as last frame if failed
@@ -377,11 +470,11 @@ def extract_shot_frames_ffmpeg(original_video_path: str, shot_info: Dict,
                 frame_paths['last_frame'] = first_frame_path
                 print(f"⚠️ Using first frame as last frame")
     else:
-        # Shot too short, use first frame as last frame
+        # Single frame segment - use first frame as last frame
         if 'first_frame' in frame_paths:
             frame_paths['last_frame'] = first_frame_path
-            print(f"⚠️ Shot too short, using first frame as last frame")
-    
+            print(f"⚠️ Single frame segment, using first frame as last frame")
+
     return frame_paths
 
 
@@ -627,6 +720,20 @@ class VideoShotSplitter:
                 raise ValueError("No shot metadata found in JSON")
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON format: {e}")
+        
+        # Apply frame splitting to prevent GPU memory issues
+        print(f"🔍 Checking for shots with >320 frames...")
+        original_shot_count = len(shot_meta_list)
+        shot_meta_list = split_large_shots(shot_meta_list, max_frames=320)
+        new_shot_count = len(shot_meta_list)
+        
+        if new_shot_count > original_shot_count:
+            print(f"✂️  Split {original_shot_count} shots into {new_shot_count} sub-segments to prevent GPU memory issues")
+            # Update shot data with new split segments
+            shot_data['shot_meta_list'] = shot_meta_list
+            shot_data['shot_num'] = new_shot_count
+        else:
+            print(f"✅ All {original_shot_count} shots have ≤320 frames - no splitting needed")
         
         # Handle URL or local file
         temp_video_path = None
