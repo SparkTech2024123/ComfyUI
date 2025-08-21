@@ -19,7 +19,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
-# Server Configuration (matches test_comprehensive_video_pipeline.py)
+# Server Configuration (matches video_style_transfer_pipeline.py)
 STYLE_TRANSFER_SERVERS = [
     "127.0.0.1:8281", "127.0.0.1:8282", "127.0.0.1:8283", "127.0.0.1:8284",
     "127.0.0.1:8285", "127.0.0.1:8286", "127.0.0.1:8287", "127.0.0.1:8288"
@@ -157,7 +157,7 @@ def main():
     # Ask user for monitoring duration
     try:
         print(f"\n🔍 Starting continuous monitoring...")
-        print(f"💡 Recommended: Run this while test_comprehensive_video_pipeline.py is executing")
+        print(f"💡 Recommended: Run this while video_style_transfer_pipeline.py is executing")
         print(f"⏱️  Default monitoring: 300 seconds (5 minutes)")
         
         # Start continuous monitoring
