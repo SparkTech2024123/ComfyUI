@@ -5,6 +5,7 @@ __pycache__/
 !/input/example.png
 /models/
 /temp/
+/user/
 /custom_nodes/
 !custom_nodes/example_node.py.example
 !custom_nodes/ComfyUI-Manager
@@ -19,7 +20,6 @@ venv/
 !/web/extensions/logging.js.example
 !/web/extensions/core/
 /tests-ui/data/object_info.json
-/user/
 *.log
 web_custom_versions/
 .DS_Store
@@ -27,3 +27,10 @@ web_custom_versions/
 openapi.yaml
 filtered-openapi.yaml
 uv.lock
+.cursor
+.augment
+/logs/
+*.jpg
+*.png
+.env
+CLAUDE.md
